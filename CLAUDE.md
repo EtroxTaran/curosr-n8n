@@ -1,8 +1,8 @@
-# Titan Workflow Suite - Claude Integration Guide
+# AI Product Factory - Claude Integration Guide
 
 ## Overview
 
-The **Titan Workflow Suite** is a sophisticated n8n-based AI orchestration system that automatically generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
+The **AI Product Factory** (formerly Titan Workflow Suite) is a sophisticated n8n-based AI orchestration system that automatically generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
 ### What It Does
 
@@ -21,10 +21,12 @@ This system uses specialized AI agents working together to:
 - **Document Intelligence**: Automatic extraction from Google Drive documents
 - **Quality Assurance**: Built-in validation and scoring mechanisms
 - **Cost Optimization**: Smart model selection (GPT-4 for reasoning, GPT-4o-mini for extraction)
+- **Dashboard UI**: React-based dashboard with Google OAuth, ADR viewer, and artifact management
+- **CI/CD Pipeline**: GitHub Actions for automated workflow sync and deployment
 
 ### Version
 
-Current version: **v2.3.0** (2026-01-13)
+Current version: **v2.6.0** (2026-01-14)
 
 ---
 
@@ -810,13 +812,142 @@ Run this validation checklist:
 
 ---
 
+## Dashboard Application
+
+The frontend dashboard provides a web-based interface for managing AI Product Factory projects.
+
+### Technology Stack
+
+| Technology | Purpose |
+|------------|---------|
+| **TanStack Start** | Full-stack React framework with SSR |
+| **Better-Auth** | Google OAuth authentication |
+| **Shadcn UI** | Component library |
+| **TanStack Query** | Data fetching and caching |
+| **PostgreSQL** | Project state storage |
+| **SeaweedFS** | S3-compatible artifact storage |
+
+### Dashboard Features
+
+#### Authentication
+- Google OAuth 2.0 with domain restriction
+- Session management with secure cookies
+- Protected routes for all project pages
+
+#### Project Overview
+- Grid of project cards showing name, phase, status
+- Quick navigation to project details
+- Real-time status updates
+
+#### Project Detail View
+- **Artifacts Tab**: View and download generated documents with Markdown rendering
+- **ADRs Tab**: Browse Architecture Decision Records parsed from decision_log.md
+- **Chat Tab**: Interactive chat interface for workflow interaction
+- **History Tab**: Timeline of workflow iterations and decisions
+- **Export Button**: Download all project artifacts as ZIP
+
+#### ADR Viewer
+- Parses ADRs from decision log files
+- Split-pane view with list and detail panels
+- Filtering by title, ID, or status
+- Status badges (proposed, accepted, deprecated, superseded)
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check with database connectivity status |
+| `/api/auth/*` | GET/POST | Better-Auth authentication routes |
+
+### Running the Dashboard
+
+```bash
+cd frontend
+npm install
+npm run dev     # Development server on port 3000
+npm run build   # Production build
+npm run start   # Start production server
+```
+
+---
+
+## CI/CD Pipeline
+
+The project includes GitHub Actions for automated deployment and workflow synchronization.
+
+### Workflow: `.github/workflows/deploy.yml`
+
+```yaml
+Jobs:
+1. validate      # Lint and type check
+2. sync-workflows # Sync n8n workflows via API
+3. notify-deploy  # Trigger Dokploy deployment
+4. health-check   # Verify services are healthy
+```
+
+### Required GitHub Secrets
+
+| Secret | Description |
+|--------|-------------|
+| `N8N_API_URL` | n8n instance URL (e.g., `https://c3po.etrox.de`) |
+| `N8N_API_KEY` | n8n API key (generate in Settings → API) |
+| `DOKPLOY_WEBHOOK_URL` | Dokploy deployment webhook (optional) |
+| `DASHBOARD_URL` | Dashboard URL for health checks (optional) |
+
+### Workflow Sync Script
+
+The `scripts/sync-workflows.js` script syncs local workflow JSON files to n8n:
+
+```bash
+# Preview changes (dry run)
+npm run sync-workflows:dry-run
+
+# Apply changes
+npm run sync-workflows
+
+# Verbose output
+npm run sync-workflows:verbose
+```
+
+**Features:**
+- Upserts workflows by name (creates new or updates existing)
+- Supports `--dry-run`, `--verbose`, `--activate` flags
+- Colored terminal output with statistics
+- Retry logic for transient failures
+
+---
+
 ## Development & Contribution
 
 ### Codebase Structure
 
 ```
-curosr-n8n/
-├── workflows/                              # Main deliverable directory
+ai-product-factory/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml                     # CI/CD pipeline
+├── frontend/                              # Dashboard application
+│   ├── app/routes/                        # TanStack file-based routing
+│   ├── components/                        # React components
+│   │   ├── adr/                          # ADR Viewer components
+│   │   ├── artifacts/                    # Document viewer
+│   │   ├── auth/                         # Authentication (UserMenu)
+│   │   ├── chat/                         # Chat interface
+│   │   ├── history/                      # History timeline
+│   │   └── ui/                           # Shadcn components
+│   ├── lib/                              # Utilities
+│   │   ├── auth.ts                       # Better-Auth configuration
+│   │   ├── auth-client.ts                # Client-side auth hooks
+│   │   ├── db.ts                         # PostgreSQL client
+│   │   ├── s3.ts                         # SeaweedFS client
+│   │   ├── n8n.ts                        # n8n webhook client
+│   │   └── export.ts                     # ZIP export utility
+│   └── types/                            # TypeScript types
+├── scripts/
+│   └── sync-workflows.js                 # n8n workflow sync script
+├── init-scripts/
+│   └── 01-project-state.sql              # Database schema
+├── workflows/                             # n8n workflow definitions
 │   │
 │   │   # Titan Workflow Suite
 │   ├── titan-main-workflow.json           # Main orchestrator (61KB)

@@ -1,12 +1,32 @@
-# Titan Workflow Suite - AI Agent Edition v2.5.0
+# AI Product Factory - Workflow Suite v2.6.0
 
-## Latest Update (2026-01-13)
+## Latest Update (2026-01-14)
 
-This release includes comprehensive fixes for broken workflow connections and integration issues.
+**v2.6.0** adds a complete Dashboard Application with authentication, ADR viewer, export engine, and CI/CD pipeline.
 
-## What's New in v2.2.0
+## What's New in v2.6.0
 
-### Critical Fixes
+### Dashboard Application
+- **Google OAuth Authentication**: Better-Auth integration with domain restriction
+- **ADR Viewer**: Split-pane viewer for Architecture Decision Records from decision logs
+- **Export Engine**: ZIP download of all project artifacts from S3
+- **Health Check API**: `/api/health` endpoint for monitoring
+
+### CI/CD Pipeline
+- **GitHub Actions Workflow**: Automated lint, typecheck, workflow sync, and deploy
+- **Workflow Sync Script**: GitOps for n8n workflows via API
+- **Dokploy Integration**: Auto-deploy on git push with health checks
+
+---
+
+## What's New in v2.5.0
+
+### Subworkflow Input Schema Fix
+- **BREAKING**: All subworkflows now require explicit input schema (n8n v1.82+ compatibility)
+- Added `workflowInputs` schema to all `executeWorkflowTrigger` nodes
+- Fixed Paper Trail Packager: changed from `manualTrigger` to `executeWorkflowTrigger`
+
+### Previous Fixes (v2.2.0)
 - **Subworkflow Output Connections**: All subworkflows now properly return data to parent workflow via Merge Output nodes
 - **Graphiti Workflow**: Fixed dead-end validation nodes, added operation-specific input validation
 - **Qdrant Workflow**: Added input validation, fixed UUID generation to proper v4 format, fixed `api-key` header for Qdrant authentication
@@ -351,6 +371,16 @@ flowchart TB
 - **n8n Community**: https://community.n8n.io/
 
 ## Version History
+
+### v2.6.0 (2026-01-14) - Dashboard & CI/CD Pipeline
+- **Dashboard Application**: Complete TanStack Start frontend with project management UI
+- **Google OAuth**: Better-Auth integration with domain restriction (`ALLOWED_EMAIL_DOMAINS`)
+- **ADR Viewer**: Split-pane viewer parsing ADR sections from decision_log.md
+- **Export Engine**: ZIP download of project artifacts using archiver library
+- **Health Check API**: `/api/health` endpoint with database connectivity check
+- **Workflow Sync Script**: `scripts/sync-workflows.js` for GitOps workflow management
+- **GitHub Actions**: `.github/workflows/deploy.yml` with lint, typecheck, sync, and deploy jobs
+- **Dokploy Integration**: Webhook-based auto-deploy with health checks
 
 ### v2.5.0 (2026-01-13) - Subworkflow Input Schema Fix
 - **BREAKING**: All subworkflows now require explicit input schema (n8n v1.82+ compatibility)

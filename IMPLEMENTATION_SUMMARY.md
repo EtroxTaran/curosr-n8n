@@ -1,15 +1,75 @@
-# Titan Workflow Implementation Summary
+# AI Product Factory - Implementation Summary
 
-**Date:** 2026-01-13
-**Version:** v2.5.0 (Phase 1 + Phase 2 Optimizations)
-**Status:** ✅ **COMPLETE & FULLY OPTIMIZED**
-**Compliance:** 100% (upgraded from 85%)
+**Date:** 2026-01-14
+**Version:** v2.6.0 (Dashboard + CI/CD)
+**Status:** ✅ **COMPLETE & PRODUCTION-READY**
+**Compliance:** 100%
 **Cost Optimization:** 82.5% reduction (from v2.3.0)
 **Performance:** 40-60% faster Phase 0, improved maintainability
 
 ---
 
-## 🎯 Changes Implemented
+## 🎯 Latest Changes (v2.6.0 - 2026-01-14)
+
+### Dashboard Enhancements
+
+1. **Google OAuth Authentication**
+   - Better-Auth integration with Google OAuth 2.0
+   - Domain restriction for allowed email domains
+   - Protected routes for all project pages
+   - User menu with avatar and sign out
+
+2. **ADR Viewer Component**
+   - Parses Architecture Decision Records from decision_log.md
+   - Split-pane UI with list and detail views
+   - Filtering by title, ID, or status
+   - Status badges (proposed, accepted, deprecated, superseded)
+
+3. **Export Engine**
+   - ZIP download of all project artifacts
+   - Uses archiver library for compression
+   - Base64 encoding for browser download
+
+4. **Health Check API**
+   - `/api/health` endpoint
+   - Database connectivity check
+   - JSON response with status and timestamp
+
+### CI/CD Pipeline
+
+1. **GitHub Actions Workflow**
+   - Validation job (lint + typecheck)
+   - Workflow sync to n8n via API
+   - Dokploy deployment trigger
+   - Health check verification
+
+2. **Workflow Sync Script**
+   - `scripts/sync-workflows.js`
+   - Upserts workflows by name
+   - Supports dry-run mode
+   - Colored terminal output
+
+### Files Added
+
+```
+.github/workflows/deploy.yml          # CI/CD pipeline
+frontend/lib/auth.ts                  # Better-Auth config
+frontend/lib/auth-client.ts           # Client-side auth
+frontend/lib/export.ts                # ZIP export
+frontend/types/adr.ts                 # ADR types + parser
+frontend/components/adr/*             # ADR Viewer
+frontend/components/auth/*            # UserMenu
+frontend/app/routes/api/auth/$.ts     # Auth API
+frontend/app/routes/api/health.ts     # Health check
+frontend/app/routes/login.tsx         # Login page
+scripts/sync-workflows.js             # Workflow sync
+package.json                          # Root package.json
+README.md                             # Project README
+```
+
+---
+
+## Previous Changes (v2.5.0 - 2026-01-13)
 
 ### 1. ✅ Session Folder Structure (Priority 1)
 
