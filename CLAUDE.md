@@ -18,7 +18,9 @@ This system uses specialized AI agents working together to:
 - **Multi-Agent Collaboration**: 5 specialized AI agents (Scavenger, Creator, Critic, Refiner, Auditor)
 - **Iterative Refinement**: Adversarial loops that improve output quality through multiple iterations
 - **Knowledge Management**: Integration with Graphiti (knowledge graph) and Qdrant (vector database)
-- **Document Intelligence**: Automatic extraction from Google Drive documents
+- **S3-Compatible Storage**: All artifacts and input documents stored in SeaweedFS (S3-compatible)
+- **Drag-and-Drop Upload**: Browser-based file upload with presigned URLs
+- **Batch Governance**: Generative UI for approving tech standards (Tech Stack Configurator)
 - **Quality Assurance**: Built-in validation and scoring mechanisms
 - **Cost Optimization**: Smart model selection (GPT-4 for reasoning, GPT-4o-mini for extraction)
 - **Dashboard UI**: React-based dashboard with Google OAuth, ADR viewer, and artifact management
@@ -26,7 +28,7 @@ This system uses specialized AI agents working together to:
 
 ### Version
 
-Current version: **v2.6.0** (2026-01-14)
+Current version: **v2.7.0** (2026-01-14)
 
 ---
 
@@ -80,9 +82,10 @@ flowchart TB
 ### Workflow Phases
 
 #### Phase 0: Scavenger (2-5 minutes)
-- Scans Google Drive folder for technical documents
+- Scans uploaded documents from S3 storage
 - Extracts technical standards, patterns, and decisions
-- Stores findings in Graphiti knowledge graph
+- Presents batch governance UI for tech stack approval (Generative UI)
+- Stores approved findings in Graphiti knowledge graph
 - Generates embeddings and stores in Qdrant vector database
 
 #### Phase 1: Vision Loop (5-15 minutes)
@@ -118,7 +121,7 @@ Before configuring MCP integration, ensure:
 2. ✅ MCP access is enabled in n8n (Settings → Instance-level MCP)
 3. ✅ Titan workflows are imported and marked "Available in MCP"
 4. ✅ All subworkflows are activated in n8n
-5. ✅ Required credentials are configured (OpenAI, Google Drive)
+5. ✅ Required credentials are configured (OpenAI, SeaweedFS/S3)
 
 ### MCP Configuration
 
@@ -308,8 +311,16 @@ Invoke-WebRequest -Uri "https://c3po.etrox.de/mcp-server/http" -Method POST -Hea
 ```json
 {
   "project_id": "string",           // Unique identifier for your project
-  "drive_folder_id": "string",      // Google Drive folder ID containing source documents
-  "description": "string"            // Brief project description (optional but recommended)
+  "project_name": "string",         // Human-readable project name
+  "description": "string",          // Brief project description (optional but recommended)
+  "input_files": [                  // Array of uploaded files (from S3)
+    {
+      "key": "string",              // S3 object key
+      "name": "string",             // Original filename
+      "size": "number",             // File size in bytes
+      "content_type": "string"      // MIME type
+    }
+  ]
 }
 ```
 
@@ -317,8 +328,12 @@ Invoke-WebRequest -Uri "https://c3po.etrox.de/mcp-server/http" -Method POST -Hea
 ```json
 {
   "project_id": "myapp-2026",
-  "drive_folder_id": "1abc123def456ghi789jkl012mno",
-  "description": "A real-time collaboration platform for remote teams"
+  "project_name": "MyApp Platform",
+  "description": "A real-time collaboration platform for remote teams",
+  "input_files": [
+    { "key": "projects/myapp-2026/input/architecture.md", "name": "architecture.md", "size": 15420, "content_type": "text/markdown" },
+    { "key": "projects/myapp-2026/input/requirements.pdf", "name": "requirements.pdf", "size": 245000, "content_type": "application/pdf" }
+  ]
 }
 ```
 
@@ -394,11 +409,15 @@ Once MCP is configured, you can interact with Titan workflows naturally through 
 
 ```
 You: "I need to generate product and architecture documentation for my new
-e-commerce platform. The source documents are in Google Drive folder
-1abc123def456. The project is called 'ShopFast'."
+e-commerce platform called 'ShopFast'."
 
-Claude: [Executes titan-main-workflow with appropriate parameters]
-[Returns complete Vision and Architecture documents after 20-30 minutes]
+Claude: "Great! Please go to the Dashboard and create a new project:
+1. Click 'New Project' on the Projects page
+2. Enter project name 'ShopFast'
+3. Drag and drop your source documents (architecture docs, requirements, etc.)
+4. Click 'Start Project'
+
+The workflow will automatically begin processing your documents."
 ```
 
 #### Example 2: Quick Vision Document
@@ -445,8 +464,8 @@ Claude: [Queries Graphiti for extracted standards while main workflow continues]
 #### Custom Parameters
 
 ```
-You: "Run Titan for project 'Beta' using Google Drive folder 1xyz789abc
-with focus on microservices architecture and event-driven patterns."
+You: "Run Titan for project 'Beta' with focus on microservices architecture
+and event-driven patterns."
 
 Claude: [Includes your architectural preferences in the workflow input]
 ```
@@ -454,8 +473,8 @@ Claude: [Includes your architectural preferences in the workflow input]
 ### Best Practices
 
 1. **Provide Clear Project Context**: The more detail you give about your project, the better the output quality
-2. **Use Descriptive Project IDs**: Makes it easier to track and reference later
-3. **Verify Google Drive Access**: Ensure the n8n Google Drive credential has access to your folder
+2. **Use Descriptive Project Names**: Makes it easier to track and reference later
+3. **Upload Quality Documents**: Include architecture docs, requirements, and technical standards
 4. **Monitor Costs**: Each full run costs $1.50-$3.00 in OpenAI API usage
 5. **Review Intermediate Outputs**: Check Scavenger results before continuing to ensure accurate standard extraction
 6. **Iterate on Results**: Use the Adversarial Loop directly to refine specific sections
@@ -520,10 +539,10 @@ All four workflows must be imported into your n8n instance:
    - Header Value: `Bearer YOUR_OPENAI_API_KEY`
    - Required for: Qdrant embedding generation
 
-3. **Google Drive OAuth2** (`Google Drive OAuth2`)
-   - Type: Google OAuth2
-   - Required for: Document scanning in Phase 0
-   - Scopes: `drive.readonly` or `drive`
+3. **S3/SeaweedFS** (Internal)
+   - Configured via environment variables
+   - Required for: Document storage and artifact management
+   - No external credential needed (uses internal Docker network)
 
 4. **OpenRouter API** (Optional)
    - Type: HTTP Header Auth
@@ -577,6 +596,15 @@ QDRANT_API_KEY=your-qdrant-api-key             # Optional
 OPENAI_API_URL=https://api.openai.com          # Default
 
 # ============================================
+# S3/SeaweedFS Configuration
+# ============================================
+S3_ENDPOINT=http://seaweedfs:8333              # SeaweedFS S3 endpoint
+S3_BUCKET=product-factory-artifacts            # Bucket name
+S3_ACCESS_KEY=your-access-key                  # S3 access key
+S3_SECRET_KEY=your-secret-key                  # S3 secret key
+S3_REGION=us-east-1                            # S3 region (default)
+
+# ============================================
 # Factory Configuration
 # ============================================
 FACTORY_MAX_ITERATIONS=5                       # Max adversarial loop iterations
@@ -622,16 +650,33 @@ docker run -d \
 
 **Manual Setup**: See https://qdrant.tech/documentation/quick-start/
 
-#### 3. Google Drive
+#### 3. SeaweedFS (S3-Compatible Storage)
 
-Ensure your Google Drive contains:
-- A folder with your source documents (architecture docs, standards, decisions)
-- Proper sharing permissions for the n8n OAuth2 credential
+SeaweedFS provides S3-compatible object storage for all documents and artifacts.
 
-**To get your Folder ID**:
-1. Open the folder in Google Drive
-2. Check the URL: `https://drive.google.com/drive/folders/FOLDER_ID_HERE`
-3. Copy the `FOLDER_ID_HERE` part
+**Setup Options**:
+
+**Docker (Recommended)** - Already included in docker-compose.yml:
+```yaml
+seaweedfs:
+  image: chrislusf/seaweedfs:latest
+  command: server -s3 -s3.port=8333
+  ports:
+    - "8333:8333"
+  volumes:
+    - seaweedfs_data:/data
+```
+
+**S3 Storage Structure**:
+```
+product-factory-artifacts/
+└── projects/{projectId}/
+    ├── input/           # User-uploaded documents (PDF, MD, DOCX)
+    ├── artifacts/       # Generated vision/architecture docs
+    ├── state/           # project_state.json
+    ├── iterations/      # Version history
+    └── standards/       # Approved tech standards export
+```
 
 ### System Requirements
 
@@ -698,16 +743,15 @@ Ensure your Google Drive contains:
 - `OpenAI API Header` for Qdrant embedding generation
 - Names must match exactly (case-sensitive)
 
-#### Problem: "Validation Error: Missing Google Drive folder ID"
+#### Problem: "Validation Error: Missing input files"
 
-**Solution**: Ensure your input includes the `drive_folder_id`:
-```json
-{
-  "project_id": "myproject",
-  "drive_folder_id": "1abc123def456",
-  "description": "My project description"
-}
-```
+**Solution**: Ensure your project has uploaded input files. Create projects through the Dashboard:
+1. Go to `/projects/new`
+2. Enter project name
+3. Upload at least one document (drag-and-drop)
+4. Click "Start Project"
+
+The workflow requires at least one input file in S3 storage.
 
 #### Problem: "Graphiti connection refused"
 
@@ -801,9 +845,10 @@ Run this validation checklist:
 ✅ Main workflow has MCP toggle ON
 ✅ OpenAI API credential exists and named correctly
 ✅ OpenAI API Header credential exists (for Qdrant)
-✅ Google Drive OAuth2 credential exists
+✅ SeaweedFS S3 service is running and accessible
 ✅ GRAPHITI_URL environment variable set
 ✅ QDRANT_URL environment variable set
+✅ S3_ENDPOINT environment variable set
 ✅ Graphiti service is running and accessible
 ✅ Qdrant service is running and accessible
 ✅ .mcp.json (project) or ~/.claude.json (user) configured correctly
@@ -858,6 +903,9 @@ The frontend dashboard provides a web-based interface for managing AI Product Fa
 |----------|--------|-------------|
 | `/api/health` | GET | Health check with database connectivity status |
 | `/api/auth/*` | GET/POST | Better-Auth authentication routes |
+| `/api/start-project` | POST | Create new project and trigger workflow |
+| `/api/presigned-url` | POST | Generate S3 presigned URL for file upload |
+| `/api/governance` | POST | Submit batch governance decisions |
 
 ### Running the Dashboard
 
@@ -928,18 +976,31 @@ ai-product-factory/
 │       └── deploy.yml                     # CI/CD pipeline
 ├── frontend/                              # Dashboard application
 │   ├── app/routes/                        # TanStack file-based routing
+│   │   ├── api/                          # API routes
+│   │   │   ├── start-project.ts          # Create project endpoint
+│   │   │   ├── presigned-url.ts          # S3 upload URL endpoint
+│   │   │   └── governance.ts             # Batch governance endpoint
+│   │   └── projects/
+│   │       ├── index.tsx                 # Projects list
+│   │       ├── new.tsx                   # New project page (drag-drop upload)
+│   │       └── $projectId.tsx            # Project detail view
 │   ├── components/                        # React components
 │   │   ├── adr/                          # ADR Viewer components
 │   │   ├── artifacts/                    # Document viewer
 │   │   ├── auth/                         # Authentication (UserMenu)
 │   │   ├── chat/                         # Chat interface
+│   │   ├── governance/                   # Governance UI components
+│   │   │   └── GovernanceWidget.tsx      # Tech Stack Configurator
 │   │   ├── history/                      # History timeline
+│   │   ├── upload/                       # File upload components
+│   │   │   └── FileUpload.tsx            # Drag-drop file uploader
 │   │   └── ui/                           # Shadcn components
 │   ├── lib/                              # Utilities
 │   │   ├── auth.ts                       # Better-Auth configuration
 │   │   ├── auth-client.ts                # Client-side auth hooks
 │   │   ├── db.ts                         # PostgreSQL client
-│   │   ├── s3.ts                         # SeaweedFS client
+│   │   ├── s3.ts                         # SeaweedFS client (with presigned URLs)
+│   │   ├── schemas.ts                    # Zod validation schemas
 │   │   ├── n8n.ts                        # n8n webhook client
 │   │   └── export.ts                     # ZIP export utility
 │   └── types/                            # TypeScript types
@@ -958,11 +1019,13 @@ ai-product-factory/
 │   │
 │   │   # AI Product Factory (Human-in-the-Loop)
 │   ├── ai-product-factory-main-workflow.json              # Main orchestrator with Smart Start
-│   ├── ai-product-factory-scavenging-subworkflow.json     # Phase 0: Context extraction
+│   ├── ai-product-factory-api-workflow.json               # API webhooks (start-project, governance-batch)
+│   ├── ai-product-factory-scavenging-subworkflow.json     # Phase 0: Context extraction (S3-based)
 │   ├── ai-product-factory-vision-loop-subworkflow.json    # Phase 1: Product Vision
 │   ├── ai-product-factory-architecture-loop-subworkflow.json  # Phase 2: ARC42 Architecture
 │   ├── ai-product-factory-perplexity-research-subworkflow.json # Research tool
-│   ├── ai-product-factory-decision-logger-subworkflow.json    # Paper trail logging
+│   ├── ai-product-factory-decision-logger-subworkflow.json    # Paper trail logging (S3-based)
+│   ├── ai-product-factory-s3-subworkflow.json             # S3 operations (upload, download, list, presigned URLs)
 │   │
 │   └── Documentation/
 │       ├── README.md                      # Setup and architecture guide
@@ -985,11 +1048,13 @@ The **AI Product Factory** is an advanced workflow system that builds on Titan's
 
 | Feature | Titan | AI Product Factory |
 |---------|-------|-------------------|
+| **Storage** | Google Drive | S3/SeaweedFS (cloud-independent) |
 | **Model Routing** | Single provider (OpenRouter) | Multi-model via OpenRouter (Claude + GPT-4o + Perplexity) |
-| **Human Interaction** | Checkpoints only | Full governance approval for tech standards |
+| **Human Interaction** | Checkpoints only | Batch governance UI (Tech Stack Configurator) |
 | **Resumability** | Manual | Automatic state persistence with Smart Start |
 | **Research** | None | Perplexity Sonar for fact-checking and risk research |
 | **Score Threshold** | 0-10 scale | 0-100 scale (more granular) |
+| **File Upload** | External (Google Drive) | Integrated drag-and-drop with presigned URLs |
 
 ### AI Product Factory Architecture
 
@@ -1062,25 +1127,41 @@ flowchart TB
 
 **Smart Start Features**:
 - Greeting on empty conversation
-- Automatic folder link parsing
+- Project creation via Dashboard UI
 - "Resume" keyword detection
-- Project state persistence in Google Drive
+- Project state persistence in S3 and PostgreSQL
 
 #### 2. Context Scavenging (Phase 0)
 
 **File**: `ai-product-factory-scavenging-subworkflow.json`
 
 **Features**:
-- Document batch processing from Google Drive
+- Document batch processing from S3 input folder
 - Technical standard extraction with Claude
-- **Human-in-the-Loop governance**: User approves each tech standard as Global or Local
+- **Batch Governance UI**: GovernanceWidget renders in chat for bulk approval
+- Perplexity enrichment with 3 alternatives per technology
 - Graphiti and Qdrant storage with scope metadata
 
-**Webhook Approval Format**:
+**Governance Payload** (sent to Dashboard):
 ```json
-POST /webhook/tech_approval_{scavenging_id}_{index}
 {
-  "scope": "global" | "local" | "skip"
+  "type": "governance_request",
+  "scavenging_id": "sc_abc123",
+  "project_id": "myproject",
+  "detected_stack": [
+    {
+      "id": "tech_001",
+      "name": "PostgreSQL",
+      "type": "technology",
+      "category": "database",
+      "confidence": 0.95,
+      "alternatives": [
+        { "name": "MySQL", "description": "Alternative RDBMS" },
+        { "name": "CockroachDB", "description": "Distributed SQL" }
+      ]
+    }
+  ],
+  "webhook_url": "https://n8n.example.com/webhook/governance-batch"
 }
 ```
 
@@ -1133,6 +1214,7 @@ POST /webhook/tech_approval_{scavenging_id}_{index}
 - `log_iteration`: Adversarial loop iterations
 - `log_approval`: Human approvals
 - `log_phase_start/end`: Phase lifecycle
+- `log_governance_batch`: Batch governance decisions (new)
 
 ### AI Product Factory Prerequisites
 
@@ -1142,8 +1224,9 @@ POST /webhook/tech_approval_{scavenging_id}_{index}
 |------------|------|---------|
 | `OpenRouter API` | OpenRouter | All LLM agents (Claude, GPT-4o, Perplexity) |
 | `OpenAI API Header` | HTTP Header | Embeddings for Qdrant |
-| `Google Drive OAuth2` | Google OAuth2 | Document storage |
 | `Zep Api account` | Zep | Agent memory |
+
+> **Note**: S3/SeaweedFS access is configured via environment variables, not credentials.
 
 #### Environment Variables
 
@@ -1151,6 +1234,12 @@ POST /webhook/tech_approval_{scavenging_id}_{index}
 # Service URLs
 GRAPHITI_URL=http://graphiti:8000
 QDRANT_URL=http://qdrant:6333
+
+# S3/SeaweedFS Configuration
+S3_ENDPOINT=http://seaweedfs:8333
+S3_BUCKET=product-factory-artifacts
+S3_ACCESS_KEY=your-access-key
+S3_SECRET_KEY=your-secret-key
 
 # Workflow Configuration
 FACTORY_MAX_ITERATIONS=5
@@ -1169,36 +1258,54 @@ FACTORY_MEMORY_ARCHITECT=10
 
 #### Starting a New Project
 
+**Via Dashboard (Recommended)**:
+1. Navigate to `/projects/new`
+2. Enter project name (e.g., "ShopFast")
+3. Optionally add a description
+4. Drag and drop your source documents (PDF, MD, DOCX, TXT)
+5. Click "Start Project"
+6. The workflow automatically begins processing
+
+**Via API**:
+```bash
+curl -X POST https://dashboard.example.com/api/start-project \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectName": "ShopFast",
+    "projectId": "shopfast-abc123",
+    "description": "E-commerce platform",
+    "inputFiles": [
+      { "key": "projects/shopfast/input/requirements.pdf", "name": "requirements.pdf", "size": 245000, "contentType": "application/pdf" }
+    ]
+  }'
 ```
-User: "I want to create vision and architecture docs for a new e-commerce platform.
-      Here's the context folder: https://drive.google.com/drive/folders/abc123
-      The project is called ShopFast"
 
-AI: [Parses folder ID and project name]
-    [Creates AI_Product_Factory/ShopFast/ folder]
-    [Starts Phase 0: Scavenging]
-    [For each discovered tech standard, asks for approval]
-```
+#### Tech Standard Approval Flow (Batch Governance)
 
-#### Tech Standard Approval Flow
+When Phase 0 discovers tech standards, a **GovernanceWidget** appears in the chat:
 
 ```
-AI: "I found a new technology standard:
-
-     **PostgreSQL** (technology)
-     - Category: database
-     - Source: architecture-decisions.md
-     - Confidence: 95%
-
-     Is this a Global Standard (all projects) or Local Standard (this project only)?"
-
-User: POST to webhook with { "scope": "global" }
-
-AI: [Stores in Graphiti global_standards group]
-    [Stores in Qdrant with scope: global]
-    [Logs decision]
-    [Continues to next standard]
+┌─────────────────────────────────────────────────────────────┐
+│  Tech Stack Configurator - ShopFast                         │
+├─────────────────────────────────────────────────────────────┤
+│  Name         │ Category  │ Source              │ Confidence│
+│  PostgreSQL   │ database  │ architecture.md     │ 95%       │
+│    └─ Alternatives: MySQL, CockroachDB, SQLite              │
+│  React        │ framework │ tech-standards.md   │ 92%       │
+│    └─ Alternatives: Vue, Svelte, Angular                    │
+│  TypeScript   │ language  │ coding-standards.md │ 98%       │
+│    └─ Alternatives: JavaScript, Flow                        │
+├─────────────────────────────────────────────────────────────┤
+│  [Approve All (Global)] [Approve All (Local)] [Skip All]    │
+│                                        [Confirm Selections] │
+└─────────────────────────────────────────────────────────────┘
 ```
+
+Users can:
+- Select alternatives from the dropdown for each technology
+- Choose scope: Global (all projects) or Local (this project only)
+- Skip technologies they don't want to approve
+- Use batch actions for quick approval
 
 #### Resuming a Project
 
@@ -1220,23 +1327,29 @@ AI: "Found existing project: **ShopFast**
 
 ### AI Product Factory Output Artifacts
 
+**S3 Storage Structure**:
 ```
-AI_Product_Factory/
-└── {Project_Name}/
-    ├── project_state.json          # Resumable state
-    ├── decision_log.md             # Complete paper trail
-    ├── Sessions/
-    │   └── {Timestamp}/
+product-factory-artifacts/
+└── projects/{project_id}/
+    ├── input/                      # User-uploaded documents
+    │   ├── requirements.pdf
+    │   ├── architecture.md
+    │   └── tech-standards.docx
+    ├── state/
+    │   └── project_state.json      # Resumable state
+    ├── artifacts/
+    │   ├── decision_log.md         # Complete paper trail
+    │   ├── ProductVision_FINAL.md
+    │   └── Architecture_FINAL.md
+    ├── iterations/
+    │   └── {session_timestamp}/
     │       ├── Vision_v1.md
     │       ├── Vision_v1_critique.json
     │       ├── Vision_v2_FINAL.md
     │       ├── Architecture_v1.md
     │       ├── Architecture_v1_risks.json
     │       └── Architecture_v2_FINAL.md
-    ├── Drafts/
-    │   ├── ProductVision_FINAL.md
-    │   └── Architecture_FINAL.md
-    └── Standards/
+    └── standards/
         ├── global_standards.json
         └── local_standards.json
 ```
@@ -1316,6 +1429,10 @@ Follow the comprehensive testing checklist in `workflows/TESTING_CHECKLIST.md`:
 See `workflows/CONVERSION_SUMMARY.md` for complete change history.
 
 **Recent Versions**:
+- **v2.7.0** (2026-01-14): S3-only storage migration, removed Google Drive dependency
+- **v2.6.0** (2026-01-14): Batch governance UI (Tech Stack Configurator), Generative UI components
+- **v2.5.0** (2026-01-14): File upload with presigned URLs, drag-and-drop interface
+- **v2.4.0** (2026-01-14): API workflow for dashboard integration
 - **v2.3.0** (2026-01-13): Fixed user confirmation flow (Form → Wait nodes)
 - **v2.2.0** (2026-01-13): Fixed subworkflow connections and integration issues
 - **v2.1.0** (2026-01-13): Qdrant integration, error handling, telemetry
@@ -1461,7 +1578,7 @@ The MCP configuration includes several API keys that provide access to external 
 - Documents processed by Titan are sent to OpenAI API
 - Embeddings are stored in Qdrant (ensure proper access controls)
 - Knowledge graph data in Graphiti (ensure proper access controls)
-- Google Drive documents require appropriate OAuth scopes
+- Input documents stored in S3/SeaweedFS (ensure bucket policies are configured)
 
 ### Best Practices
 

@@ -7,7 +7,7 @@
           "allowFileUploads": true,
           "showWelcomeScreen": true
         },
-        "initialMessage": "Welcome to the AI Product Factory!\n\nI help you create comprehensive Product Vision and Architecture documents through a collaborative, iterative process.\n\nTo get started, please:\n1. **Paste a Google Drive Folder Link** containing your context documents (architecture docs, requirements, etc.)\n2. **Or type 'Resume'** to pick up where we left off on a previous project\n\nThen tell me your **Project Name** and I'll guide you through the process."
+        "initialMessage": "Welcome to the AI Product Factory!\n\nI help you create comprehensive Product Vision and Architecture documents through a collaborative, iterative process.\n\nTo get started:\n1. **Upload your context documents** (PDF, Markdown, TXT, DOCX) using the file upload\n2. **Or type 'Resume'** to pick up where we left off on a previous project\n\nThen tell me your **Project Name** and I'll guide you through the process."
       },
       "id": "chat-trigger",
       "name": "User Chat Entry Point",
@@ -18,7 +18,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Smart Start Handler\n// Parses user input, handles resume requests, and initializes project\n\nconst chatInput = $input.first().json;\nconst userMessage = chatInput.chatInput || chatInput.message || '';\nconst chatHistory = chatInput.sessionId ? true : false;\nconst uploadedFiles = chatInput.files || [];\n\n// Check for resume request\nconst isResumeRequest = userMessage.toLowerCase().includes('resume');\n\n// Extract Google Drive folder ID from URL\nlet driveFolderId = null;\nconst driveUrlMatch = userMessage.match(/folders\\/([a-zA-Z0-9_-]+)/);\nif (driveUrlMatch) {\n  driveFolderId = driveUrlMatch[1];\n}\n\n// Alternative: Check for direct folder ID\nif (!driveFolderId) {\n  const folderIdMatch = userMessage.match(/[a-zA-Z0-9_-]{25,}/);\n  if (folderIdMatch && !folderIdMatch[0].includes(' ')) {\n    driveFolderId = folderIdMatch[0];\n  }\n}\n\n// Extract project name (look for quoted text or capitalized words)\nlet projectName = null;\nconst quotedMatch = userMessage.match(/[\"']([^\"']+)[\"']/);\nif (quotedMatch) {\n  projectName = quotedMatch[1];\n} else {\n  // Look for \"project name\" or \"called\" patterns\n  const namePatterns = [\n    /project\\s+(?:name|called|named|is)\\s*[:\\-]?\\s*([A-Za-z0-9_-]+)/i,\n    /called\\s+([A-Za-z0-9_-]+)/i,\n    /name\\s*[:\\-]\\s*([A-Za-z0-9_-]+)/i\n  ];\n  \n  for (const pattern of namePatterns) {\n    const match = userMessage.match(pattern);\n    if (match) {\n      projectName = match[1];\n      break;\n    }\n  }\n}\n\n// Generate session ID\nconst sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\n// Load configuration from environment\nconst config = {\n  max_iterations: parseInt($env.FACTORY_MAX_ITERATIONS) || 5,\n  score_threshold: parseInt($env.FACTORY_SCORE_THRESHOLD) || 90,\n  batch_size: parseInt($env.FACTORY_BATCH_SIZE) || 3,\n  confirmation_timeout: parseInt($env.FACTORY_CONFIRMATION_TIMEOUT) || 3600\n};\n\nreturn {\n  json: {\n    session_id: sessionId,\n    user_message: userMessage,\n    is_resume_request: isResumeRequest,\n    drive_folder_id: driveFolderId,\n    project_name: projectName,\n    uploaded_files: uploadedFiles,\n    has_drive_folder: !!driveFolderId,\n    has_project_name: !!projectName,\n    has_uploaded_files: uploadedFiles.length > 0,\n    needs_more_info: !isResumeRequest && (!driveFolderId && uploadedFiles.length === 0),\n    config,\n    timestamp: new Date().toISOString()\n  }\n};"
+        "jsCode": "// Smart Start Handler\n// Parses user input, handles resume requests, and initializes project (S3-only)\n\nconst chatInput = $input.first().json;\nconst userMessage = chatInput.chatInput || chatInput.message || '';\nconst uploadedFiles = chatInput.files || [];\n\n// Check for resume request\nconst isResumeRequest = userMessage.toLowerCase().includes('resume');\n\n// Extract project name (look for quoted text or capitalized words)\nlet projectName = null;\nconst quotedMatch = userMessage.match(/[\"']([^\"']+)[\"']/);\nif (quotedMatch) {\n  projectName = quotedMatch[1];\n} else {\n  // Look for \"project name\" or \"called\" patterns\n  const namePatterns = [\n    /project\\s+(?:name|called|named|is)\\s*[:\\-]?\\s*([A-Za-z0-9_-]+)/i,\n    /called\\s+([A-Za-z0-9_-]+)/i,\n    /name\\s*[:\\-]\\s*([A-Za-z0-9_-]+)/i\n  ];\n  \n  for (const pattern of namePatterns) {\n    const match = userMessage.match(pattern);\n    if (match) {\n      projectName = match[1];\n      break;\n    }\n  }\n}\n\n// Generate session ID\nconst sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\n// Load configuration from environment\nconst config = {\n  max_iterations: parseInt($env.FACTORY_MAX_ITERATIONS) || 5,\n  score_threshold: parseInt($env.FACTORY_SCORE_THRESHOLD) || 90,\n  batch_size: parseInt($env.FACTORY_BATCH_SIZE) || 3,\n  confirmation_timeout: parseInt($env.FACTORY_CONFIRMATION_TIMEOUT) || 3600\n};\n\nreturn {\n  json: {\n    session_id: sessionId,\n    user_message: userMessage,\n    is_resume_request: isResumeRequest,\n    project_name: projectName,\n    uploaded_files: uploadedFiles,\n    has_project_name: !!projectName,\n    has_uploaded_files: uploadedFiles.length > 0,\n    needs_more_info: !isResumeRequest && uploadedFiles.length === 0,\n    config,\n    timestamp: new Date().toISOString()\n  }\n};"
       },
       "id": "smart-start-handler",
       "name": "Smart Start Handler",
@@ -56,63 +56,33 @@
     },
     {
       "parameters": {
-        "operation": "search",
-        "folderId": {
+        "workflowId": {
           "__rl": true,
-          "mode": "list",
-          "value": "root"
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
         },
-        "queryString": "name = 'AI_Product_Factory' and mimeType = 'application/vnd.google-apps.folder'",
-        "returnAll": false,
-        "limit": 1,
-        "options": {}
-      },
-      "id": "find-factory-folder",
-      "name": "Find Factory Folder",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [720, -200],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "list_projects"
+          }
         }
-      }
+      },
+      "id": "list-projects-s3",
+      "name": "List Projects from S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [720, -200]
     },
     {
       "parameters": {
-        "operation": "list",
-        "folderId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.id }}"
-        },
-        "returnAll": true,
-        "options": {
-          "fields": "id, name, modifiedTime"
-        }
-      },
-      "id": "list-projects",
-      "name": "List Projects",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [960, -200],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Find most recent project with state file\n\nconst startData = $('Smart Start Handler').item.json;\nconst projects = $input.all().map(item => item.json);\n\n// Filter for folders only and sort by modified time\nconst projectFolders = projects\n  .filter(p => p.mimeType === 'application/vnd.google-apps.folder')\n  .sort((a, b) => new Date(b.modifiedTime) - new Date(a.modifiedTime));\n\nif (projectFolders.length === 0) {\n  return {\n    json: {\n      ...startData,\n      resume_available: false,\n      message: \"No existing projects found. Let's start a new one! Please provide:\\n1. Google Drive Folder Link with context documents\\n2. Project Name\"\n    }\n  };\n}\n\n// Get the most recent project\nconst latestProject = projectFolders[0];\n\nreturn {\n  json: {\n    ...startData,\n    resume_available: true,\n    latest_project: latestProject.name,\n    latest_project_id: latestProject.id,\n    latest_modified: latestProject.modifiedTime,\n    all_projects: projectFolders.slice(0, 5).map(p => ({\n      name: p.name,\n      id: p.id,\n      modified: p.modifiedTime\n    }))\n  }\n};"
+        "jsCode": "// Find most recent project from S3\n\nconst startData = $('Smart Start Handler').item.json;\nconst s3Result = $input.first().json;\nconst projects = s3Result.projects || [];\n\nif (projects.length === 0) {\n  return {\n    json: {\n      ...startData,\n      resume_available: false,\n      message: \"No existing projects found. Let's start a new one! Please upload your context documents and provide a project name.\"\n    }\n  };\n}\n\n// Sort by modified time (most recent first)\nconst sortedProjects = projects.sort((a, b) => {\n  const dateA = new Date(a.last_modified || a.created_at || 0);\n  const dateB = new Date(b.last_modified || b.created_at || 0);\n  return dateB - dateA;\n});\n\nconst latestProject = sortedProjects[0];\n\nreturn {\n  json: {\n    ...startData,\n    resume_available: true,\n    latest_project: latestProject.project_id,\n    latest_project_id: latestProject.project_id,\n    latest_modified: latestProject.last_modified,\n    all_projects: sortedProjects.slice(0, 5).map(p => ({\n      name: p.project_id,\n      id: p.project_id,\n      modified: p.last_modified\n    }))\n  }\n};"
       },
       "id": "find-latest-project",
       "name": "Find Latest Project",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1200, -200]
+      "position": [960, -200]
     },
     {
       "parameters": {
@@ -140,64 +110,38 @@
       "name": "Resume Available?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1440, -200]
+      "position": [1200, -200]
     },
     {
       "parameters": {
-        "operation": "search",
-        "folderId": {
+        "workflowId": {
           "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.latest_project_id }}"
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
         },
-        "queryString": "name = 'project_state.json'",
-        "returnAll": false,
-        "limit": 1,
-        "options": {}
-      },
-      "id": "find-state-file",
-      "name": "Find State File",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [1680, -300],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "download_artifact",
+            "key": "={{ 'projects/' + $json.latest_project_id + '/state/project_state.json' }}"
+          }
         }
-      }
+      },
+      "id": "download-state-s3",
+      "name": "Download State from S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1440, -300]
     },
     {
       "parameters": {
-        "operation": "download",
-        "fileId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.id }}"
-        },
-        "options": {}
-      },
-      "id": "download-state",
-      "name": "Download State",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [1920, -300],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Parse loaded project state and prepare resume message\n\nconst prevData = $('Find Latest Project').item.json;\nconst downloadedFile = $input.first();\n\nlet stateContent = '';\nif (downloadedFile.binary && downloadedFile.binary.data) {\n  stateContent = Buffer.from(downloadedFile.binary.data.data, 'base64').toString('utf8');\n}\n\nlet projectState = null;\ntry {\n  projectState = JSON.parse(stateContent);\n} catch (e) {\n  projectState = null;\n}\n\nif (!projectState) {\n  return {\n    json: {\n      ...prevData,\n      has_valid_state: false,\n      message: `Found project '${prevData.latest_project}' but couldn't load state. Would you like to start fresh?`\n    }\n  };\n}\n\n// Prepare resume information\nconst phaseNames = {\n  0: 'Context Scavenging',\n  1: 'Product Vision Loop',\n  2: 'Architecture Loop',\n  3: 'Final Audit'\n};\n\nconst currentPhase = projectState.current_phase || 0;\nconst phaseName = phaseNames[currentPhase] || `Phase ${currentPhase}`;\n\nconst resumeMessage = `Found existing project: **${projectState.project_name}**\n\n**Current Status**:\n- Phase: ${currentPhase} - ${phaseName}\n- Status: ${projectState.phase_status || 'in_progress'}\n- Last Updated: ${projectState.updated_at || 'Unknown'}\n- Total Iterations: ${projectState.telemetry?.total_iterations || 0}\n\nWould you like to:\n1. **Resume** from Phase ${currentPhase}\n2. **Start over** with this project\n3. Work on a **different project**`;\n\nconst webhookSuffix = `resume_choice_${prevData.session_id}`;\n\nreturn {\n  json: {\n    ...prevData,\n    has_valid_state: true,\n    project_state: projectState,\n    project_name: projectState.project_name,\n    current_phase: currentPhase,\n    phase_name: phaseName,\n    resume_message: resumeMessage,\n    webhook_suffix: webhookSuffix\n  }\n};"
+        "jsCode": "// Parse loaded project state from S3\n\nconst prevData = $('Find Latest Project').item.json;\nconst s3Response = $input.first().json;\n\nlet projectState = null;\ntry {\n  if (s3Response.content) {\n    projectState = JSON.parse(s3Response.content);\n  } else if (s3Response.data) {\n    projectState = typeof s3Response.data === 'string' \n      ? JSON.parse(s3Response.data) \n      : s3Response.data;\n  }\n} catch (e) {\n  projectState = null;\n}\n\nif (!projectState) {\n  return {\n    json: {\n      ...prevData,\n      has_valid_state: false,\n      message: `Found project '${prevData.latest_project}' but couldn't load state. Would you like to start fresh?`\n    }\n  };\n}\n\n// Prepare resume information\nconst phaseNames = {\n  0: 'Context Scavenging',\n  1: 'Product Vision Loop',\n  2: 'Architecture Loop',\n  3: 'Final Audit'\n};\n\nconst currentPhase = projectState.current_phase || 0;\nconst phaseName = phaseNames[currentPhase] || `Phase ${currentPhase}`;\n\nconst resumeMessage = `Found existing project: **${projectState.project_name}**\n\n**Current Status**:\n- Phase: ${currentPhase} - ${phaseName}\n- Status: ${projectState.phase_status || 'in_progress'}\n- Last Updated: ${projectState.updated_at || 'Unknown'}\n- Total Iterations: ${projectState.telemetry?.total_iterations || 0}\n\nWould you like to:\n1. **Resume** from Phase ${currentPhase}\n2. **Start over** with this project\n3. Work on a **different project**`;\n\nreturn {\n  json: {\n    ...prevData,\n    has_valid_state: true,\n    project_state: projectState,\n    project_name: projectState.project_name,\n    current_phase: currentPhase,\n    phase_name: phaseName,\n    resume_message: resumeMessage\n  }\n};"
       },
       "id": "parse-state",
       "name": "Parse State File",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2160, -300]
+      "position": [1680, -300]
     },
     {
       "parameters": {
@@ -229,7 +173,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Request more information from user\n\nconst data = $input.first().json;\n\nlet message = \"I need a bit more information to get started.\\n\\n\";\n\nif (!data.has_drive_folder && !data.has_uploaded_files) {\n  message += \"Please provide context documents in one of these ways:\\n\";\n  message += \"- Paste a Google Drive folder link\\n\";\n  message += \"- Upload files directly in the chat\\n\\n\";\n}\n\nif (!data.has_project_name) {\n  message += \"Also, what would you like to call this project?\\n\";\n}\n\nmessage += \"\\nExample: 'My project is called ShopFast. Here's the context folder: https://drive.google.com/drive/folders/abc123'\";\n\nreturn {\n  json: {\n    ...data,\n    response_message: message,\n    awaiting_input: true\n  }\n};"
+        "jsCode": "// Request more information from user\n\nconst data = $input.first().json;\n\nlet message = \"I need a bit more information to get started.\\n\\n\";\n\nif (!data.has_uploaded_files) {\n  message += \"Please upload your context documents using the file upload button above.\\n\";\n  message += \"Supported formats: PDF, Markdown (.md), TXT, DOCX\\n\\n\";\n}\n\nif (!data.has_project_name) {\n  message += \"Also, what would you like to call this project?\\n\";\n}\n\nmessage += \"\\nExample: 'My project is called ShopFast' (then upload your files)\";\n\nreturn {\n  json: {\n    ...data,\n    response_message: message,\n    awaiting_input: true\n  }\n};"
       },
       "id": "request-more-info",
       "name": "Request More Info",
@@ -239,7 +183,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Initialize new project\n\nconst data = $input.first().json;\n\n// Generate project ID if no name provided\nconst projectId = data.project_name || 'Project_' + Date.now();\n\nreturn {\n  json: {\n    session_id: data.session_id,\n    project_id: projectId,\n    project_name: projectId,\n    drive_folder_id: data.drive_folder_id,\n    uploaded_files: data.uploaded_files,\n    config: data.config,\n    current_phase: 0,\n    phase_status: 'pending',\n    is_new_project: true,\n    timestamp: new Date().toISOString()\n  }\n};"
+        "jsCode": "// Initialize new project (S3-only, no Google Drive)\n\nconst data = $input.first().json;\n\n// Generate project ID if no name provided\nconst projectId = data.project_name || 'Project_' + Date.now();\n\n// Map uploaded files to input_files format\nconst inputFiles = (data.uploaded_files || []).map((file, idx) => ({\n  key: `projects/${projectId}/input/${file.name || 'file_' + idx}`,\n  name: file.name || 'file_' + idx,\n  size: file.size || 0,\n  contentType: file.mimeType || file.contentType || 'application/octet-stream',\n  uploadedAt: new Date().toISOString()\n}));\n\nreturn {\n  json: {\n    session_id: data.session_id,\n    project_id: projectId,\n    project_name: projectId,\n    input_files: inputFiles,\n    uploaded_files: data.uploaded_files,\n    config: data.config,\n    current_phase: 0,\n    phase_status: 'pending',\n    is_new_project: true,\n    timestamp: new Date().toISOString()\n  }\n};"
       },
       "id": "init-new-project",
       "name": "Initialize New Project",
@@ -249,67 +193,46 @@
     },
     {
       "parameters": {
-        "operation": "createFolder",
-        "name": "={{ 'AI_Product_Factory/' + $json.project_name }}",
-        "options": {}
-      },
-      "id": "create-project-folder",
-      "name": "Create Project Folder",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [1200, 0],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Create initial project state\n// Store state in static data for later access after subworkflow calls\n\nconst prevData = $('Initialize New Project').item.json;\nconst folderResult = $input.first().json;\n\n// Store state in static data for access after subworkflow calls\nconst staticData = $getWorkflowStaticData('global');\nstaticData.phase0InputState = null; // Will be set after this node\n\nconst projectState = {\n  project_name: prevData.project_name,\n  project_id: prevData.project_id,\n  session_id: prevData.session_id,\n  folder_id: folderResult.id,\n  created_at: new Date().toISOString(),\n  updated_at: new Date().toISOString(),\n  current_phase: 0,\n  phase_status: 'pending',\n  last_iteration: {\n    phase: 0,\n    iteration: 0,\n    score: 0\n  },\n  key_decisions: [],\n  tech_standards: {\n    global: [],\n    local: []\n  },\n  artifacts: {\n    vision_draft: null,\n    architecture_draft: null,\n    decision_log: null\n  },\n  telemetry: {\n    total_iterations: 0,\n    total_duration_ms: 0\n  },\n  config: prevData.config\n};\n\nreturn {\n  json: {\n    ...prevData,\n    folder_id: folderResult.id,\n    project_state: projectState,\n    state_json: JSON.stringify(projectState, null, 2)\n  }\n};"
+        "jsCode": "// Create initial project state (S3-only)\n\nconst prevData = $input.first().json;\n\n// Store state in static data for access after subworkflow calls\nconst staticData = $getWorkflowStaticData('global');\n\nconst projectState = {\n  project_name: prevData.project_name,\n  project_id: prevData.project_id,\n  session_id: prevData.session_id,\n  created_at: new Date().toISOString(),\n  updated_at: new Date().toISOString(),\n  current_phase: 0,\n  phase_status: 'pending',\n  input_files: prevData.input_files || [],\n  last_iteration: {\n    phase: 0,\n    iteration: 0,\n    score: 0\n  },\n  key_decisions: [],\n  tech_standards: {\n    global: [],\n    local: []\n  },\n  artifacts: {\n    vision_draft: null,\n    architecture_draft: null,\n    decision_log: null\n  },\n  telemetry: {\n    total_iterations: 0,\n    total_duration_ms: 0\n  },\n  config: prevData.config\n};\n\nreturn {\n  json: {\n    ...prevData,\n    project_state: projectState,\n    state_json: JSON.stringify(projectState, null, 2)\n  }\n};"
       },
       "id": "create-initial-state",
       "name": "Create Initial State",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
+      "position": [1200, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "key": "={{ 'projects/' + $json.project_id + '/state/project_state.json' }}",
+            "content": "={{ $json.state_json }}",
+            "content_type": "application/json"
+          }
+        }
+      },
+      "id": "save-initial-state-s3",
+      "name": "Save Initial State to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
       "position": [1440, 0]
     },
     {
       "parameters": {
-        "operation": "upload",
-        "folderId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.folder_id }}"
-        },
-        "name": "project_state.json",
-        "contentPropertyName": "={{ $json.state_json }}",
-        "options": {
-          "mimeType": "application/json"
-        }
-      },
-      "id": "save-initial-state",
-      "name": "Save Initial State",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [1680, 0],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Store state in static data before Phase 0 subworkflow call\n// This allows Update State After Phase 0 to access the state\n\nconst inputData = $input.first().json;\n\n// Store in static data for access after subworkflow returns\nconst staticData = $getWorkflowStaticData('global');\nstaticData.phase0InputState = inputData;\n\n// Pass through unchanged\nreturn { json: inputData };"
+        "jsCode": "// Store state in static data before Phase 0 subworkflow call\n\nconst inputData = $input.first().json;\n\n// Store in static data for access after subworkflow returns\nconst staticData = $getWorkflowStaticData('global');\nstaticData.phase0InputState = inputData;\n\nreturn { json: inputData };"
       },
       "id": "merge-to-phase-0",
       "name": "Ready for Phase 0",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1920, 0]
+      "position": [1680, 0]
     },
     {
       "parameters": {
@@ -327,7 +250,7 @@
             "phase": "0",
             "entry_type": "Phase 0 Start",
             "content": "Starting Context Scavenging phase",
-            "metadata": "={{ JSON.stringify({ description: 'Extracting technical standards from documents', config: $json.config }) }}"
+            "metadata": "={{ JSON.stringify({ description: 'Extracting technical standards from S3 documents', config: $json.config }) }}"
           }
         }
       },
@@ -335,7 +258,7 @@
       "name": "Log Phase 0 Start",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [2160, 0]
+      "position": [1920, 0]
     },
     {
       "parameters": {
@@ -349,8 +272,7 @@
           "value": {
             "project_id": "={{ $json.project_id }}",
             "session_id": "={{ $json.session_id }}",
-            "drive_folder_id": "={{ $json.drive_folder_id }}",
-            "uploaded_files": "={{ JSON.stringify($json.uploaded_files || []) }}"
+            "input_files": "={{ JSON.stringify($json.input_files || []) }}"
           }
         }
       },
@@ -358,40 +280,40 @@
       "name": "Run Phase 0: Scavenging",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [2400, 0]
+      "position": [2160, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Update state after Phase 0 completes\n// Note: We cannot use $('Create Initial State') here as it's after a subworkflow call\n// Instead, we use the static data pattern to preserve state\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevState = staticData.phase0InputState || {};\nconst phase0Result = $input.first().json;\n\n// Update project state\nconst updatedState = {\n  ...prevState.project_state,\n  current_phase: 1,\n  phase_status: 'pending',\n  updated_at: new Date().toISOString(),\n  last_iteration: {\n    phase: 0,\n    iteration: phase0Result.summary?.total_standards_found || 0,\n    score: 100 // Phase 0 doesn't have a score\n  },\n  tech_standards: {\n    global: phase0Result.processed_standards?.filter(s => s.scope === 'global').map(s => s.name) || [],\n    local: phase0Result.processed_standards?.filter(s => s.scope === 'local').map(s => s.name) || []\n  },\n  phase_0_result: phase0Result\n};\n\nconst outputData = {\n  ...prevState,\n  project_state: updatedState,\n  state_json: JSON.stringify(updatedState, null, 2),\n  phase_0_complete: true,\n  tech_standards: phase0Result.processed_standards || [],\n  context: phase0Result.summary || {}\n};\n\n// Store state for Phase 1 to access after the subworkflow call\nstaticData.phase1InputState = outputData;\n\nreturn { json: outputData };"
+        "jsCode": "// Update state after Phase 0 completes\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevState = staticData.phase0InputState || {};\nconst phase0Result = $input.first().json;\n\n// Update project state\nconst updatedState = {\n  ...prevState.project_state,\n  current_phase: 1,\n  phase_status: 'pending',\n  updated_at: new Date().toISOString(),\n  last_iteration: {\n    phase: 0,\n    iteration: phase0Result.summary?.total_standards_found || 0,\n    score: 100\n  },\n  tech_standards: {\n    global: phase0Result.processed_standards?.filter(s => s.scope === 'global').map(s => s.name) || [],\n    local: phase0Result.processed_standards?.filter(s => s.scope === 'local').map(s => s.name) || []\n  },\n  phase_0_result: phase0Result\n};\n\nconst outputData = {\n  ...prevState,\n  project_state: updatedState,\n  state_json: JSON.stringify(updatedState, null, 2),\n  phase_0_complete: true,\n  tech_standards: phase0Result.processed_standards || [],\n  context: phase0Result.summary || {}\n};\n\n// Store state for Phase 1\nstaticData.phase1InputState = outputData;\n\nreturn { json: outputData };"
       },
       "id": "update-state-phase-0",
       "name": "Update State After Phase 0",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2640, 0]
+      "position": [2400, 0]
     },
     {
       "parameters": {
-        "operation": "update",
-        "fileId": {
+        "workflowId": {
           "__rl": true,
-          "mode": "id",
-          "value": "={{ $('Save Initial State').item.json.id }}"
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
         },
-        "contentPropertyName": "={{ $json.state_json }}",
-        "options": {}
-      },
-      "id": "save-state-phase-0",
-      "name": "Save State After Phase 0",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [2880, 0],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "key": "={{ 'projects/' + $json.project_id + '/state/project_state.json' }}",
+            "content": "={{ $json.state_json }}",
+            "content_type": "application/json"
+          }
         }
-      }
+      },
+      "id": "save-state-phase-0-s3",
+      "name": "Save State After Phase 0 to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2640, 0]
     },
     {
       "parameters": {
@@ -416,17 +338,17 @@
       "name": "Run Phase 1: Vision Loop",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [3120, 0]
+      "position": [2880, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Update state after Phase 1 completes\n// Note: We use static data to access state from before the subworkflow call\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevData = staticData.phase1InputState || {};\nconst phase1Result = $input.first().json;\n\nconst updatedState = {\n  ...prevData.project_state,\n  current_phase: 2,\n  phase_status: 'pending',\n  updated_at: new Date().toISOString(),\n  last_iteration: {\n    phase: 1,\n    iteration: phase1Result.total_iterations || 0,\n    score: phase1Result.final_score || 0\n  },\n  artifacts: {\n    ...prevData.project_state.artifacts,\n    vision_draft: phase1Result.final_draft ? 'Drafts/ProductVision_FINAL.md' : null\n  },\n  telemetry: {\n    ...prevData.project_state.telemetry,\n    total_iterations: (prevData.project_state.telemetry?.total_iterations || 0) + (phase1Result.total_iterations || 0),\n    total_duration_ms: (prevData.project_state.telemetry?.total_duration_ms || 0) + (phase1Result.telemetry?.duration_ms || 0)\n  },\n  phase_1_result: {\n    status: phase1Result.status,\n    final_score: phase1Result.final_score,\n    total_iterations: phase1Result.total_iterations,\n    convergence_achieved: phase1Result.convergence_achieved\n  }\n};\n\nconst outputData = {\n  ...prevData,\n  project_state: updatedState,\n  state_json: JSON.stringify(updatedState, null, 2),\n  vision_document: phase1Result.final_draft,\n  vision_score: phase1Result.final_score,\n  phase_1_complete: true\n};\n\n// Store state for Phase 2 to access after the subworkflow call\nstaticData.phase2InputState = outputData;\n\nreturn { json: outputData };"
+        "jsCode": "// Update state after Phase 1 completes\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevData = staticData.phase1InputState || {};\nconst phase1Result = $input.first().json;\n\nconst updatedState = {\n  ...prevData.project_state,\n  current_phase: 2,\n  phase_status: 'pending',\n  updated_at: new Date().toISOString(),\n  last_iteration: {\n    phase: 1,\n    iteration: phase1Result.total_iterations || 0,\n    score: phase1Result.final_score || 0\n  },\n  artifacts: {\n    ...prevData.project_state.artifacts,\n    vision_draft: phase1Result.final_draft ? 'artifacts/ProductVision_FINAL.md' : null\n  },\n  telemetry: {\n    ...prevData.project_state.telemetry,\n    total_iterations: (prevData.project_state.telemetry?.total_iterations || 0) + (phase1Result.total_iterations || 0),\n    total_duration_ms: (prevData.project_state.telemetry?.total_duration_ms || 0) + (phase1Result.telemetry?.duration_ms || 0)\n  },\n  phase_1_result: {\n    status: phase1Result.status,\n    final_score: phase1Result.final_score,\n    total_iterations: phase1Result.total_iterations,\n    convergence_achieved: phase1Result.convergence_achieved\n  }\n};\n\nconst outputData = {\n  ...prevData,\n  project_state: updatedState,\n  state_json: JSON.stringify(updatedState, null, 2),\n  vision_document: phase1Result.final_draft,\n  vision_score: phase1Result.final_score,\n  phase_1_complete: true\n};\n\n// Store state for Phase 2\nstaticData.phase2InputState = outputData;\n\nreturn { json: outputData };"
       },
       "id": "update-state-phase-1",
       "name": "Update State After Phase 1",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3360, 0]
+      "position": [3120, 0]
     },
     {
       "parameters": {
@@ -452,47 +374,211 @@
       "name": "Run Phase 2: Architecture Loop",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
+      "position": [3360, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Finalize workflow and prepare output\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevData = staticData.phase2InputState || {};\nconst phase2Result = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(prevData.project_state?.created_at || endTime);\nconst totalDurationMs = endTime - startTime;\nconst totalDurationFormatted = `${Math.floor(totalDurationMs / 60000)}m ${Math.floor((totalDurationMs % 60000) / 1000)}s`;\n\nconst finalState = {\n  ...prevData.project_state,\n  current_phase: 3,\n  phase_status: 'completed',\n  updated_at: endTime.toISOString(),\n  completed_at: endTime.toISOString(),\n  artifacts: {\n    ...prevData.project_state?.artifacts,\n    architecture_draft: phase2Result.final_draft ? 'artifacts/Architecture_FINAL.md' : null\n  },\n  telemetry: {\n    ...prevData.project_state?.telemetry,\n    total_iterations: (prevData.project_state?.telemetry?.total_iterations || 0) + (phase2Result.total_iterations || 0),\n    total_duration_ms: totalDurationMs,\n    total_duration_formatted: totalDurationFormatted\n  },\n  phase_2_result: {\n    status: phase2Result.status,\n    final_score: phase2Result.final_score,\n    total_iterations: phase2Result.total_iterations,\n    convergence_achieved: phase2Result.convergence_achieved\n  }\n};\n\nconst completionMessage = `## AI Product Factory - Complete!\n\n**Project**: ${prevData.project_name || 'Unknown'}\n\n### Summary\n\n| Phase | Status | Score | Iterations |\n|-------|--------|-------|------------|\n| Phase 0: Scavenging | Complete | N/A | ${prevData.project_state?.phase_0_result?.summary?.total_standards_found || 0} standards |\n| Phase 1: Vision | ${prevData.phase_1_result?.status || 'Complete'} | ${prevData.vision_score || 'N/A'}/100 | ${prevData.phase_1_result?.total_iterations || 'N/A'} |\n| Phase 2: Architecture | ${phase2Result.status} | ${phase2Result.final_score}/100 | ${phase2Result.total_iterations} |\n\n### Artifacts Created\n- **Product Vision**: artifacts/ProductVision_FINAL.md\n- **Architecture**: artifacts/Architecture_FINAL.md\n- **Decision Log**: decision_log.md\n\n### Total Duration\n${totalDurationFormatted}\n\nAll documents have been saved to S3 in the **projects/${prevData.project_id}/** folder.`;\n\n// CLEANUP: Clear static data\ndelete staticData.phase0InputState;\ndelete staticData.phase1InputState;\ndelete staticData.phase2InputState;\n\nreturn {\n  json: {\n    project_id: prevData.project_id,\n    project_name: prevData.project_name,\n    session_id: prevData.session_id,\n    status: 'completed',\n    project_state: finalState,\n    state_json: JSON.stringify(finalState, null, 2),\n    vision_document: prevData.vision_document,\n    architecture_document: phase2Result.final_draft,\n    completion_message: completionMessage,\n    telemetry: finalState.telemetry\n  }\n};"
+      },
+      "id": "finalize-workflow",
+      "name": "Finalize Workflow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [3600, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Finalize workflow and prepare output\n// Use static data to access state from before the Phase 2 subworkflow call\n\nconst staticData = $getWorkflowStaticData('global');\nconst prevData = staticData.phase2InputState || {};\nconst phase2Result = $input.first().json;\n\nconst endTime = new Date();\nconst startTime = new Date(prevData.project_state?.created_at || endTime);\nconst totalDurationMs = endTime - startTime;\nconst totalDurationFormatted = `${Math.floor(totalDurationMs / 60000)}m ${Math.floor((totalDurationMs % 60000) / 1000)}s`;\n\nconst finalState = {\n  ...prevData.project_state,\n  current_phase: 3,\n  phase_status: 'completed',\n  updated_at: endTime.toISOString(),\n  completed_at: endTime.toISOString(),\n  artifacts: {\n    ...prevData.project_state?.artifacts,\n    architecture_draft: phase2Result.final_draft ? 'Drafts/Architecture_FINAL.md' : null\n  },\n  telemetry: {\n    ...prevData.project_state?.telemetry,\n    total_iterations: (prevData.project_state?.telemetry?.total_iterations || 0) + (phase2Result.total_iterations || 0),\n    total_duration_ms: totalDurationMs,\n    total_duration_formatted: totalDurationFormatted\n  },\n  phase_2_result: {\n    status: phase2Result.status,\n    final_score: phase2Result.final_score,\n    total_iterations: phase2Result.total_iterations,\n    convergence_achieved: phase2Result.convergence_achieved\n  }\n};\n\nconst completionMessage = `## AI Product Factory - Complete!\n\n**Project**: ${prevData.project_name || 'Unknown'}\n\n### Summary\n\n| Phase | Status | Score | Iterations |\n|-------|--------|-------|------------|\n| Phase 0: Scavenging | Complete | N/A | ${prevData.project_state?.phase_0_result?.summary?.total_standards_found || 0} standards |\n| Phase 1: Vision | ${prevData.phase_1_result?.status || 'Complete'} | ${prevData.vision_score || 'N/A'}/100 | ${prevData.phase_1_result?.total_iterations || 'N/A'} |\n| Phase 2: Architecture | ${phase2Result.status} | ${phase2Result.final_score}/100 | ${phase2Result.total_iterations} |\n\n### Artifacts Created\n- **Product Vision**: Drafts/ProductVision_FINAL.md\n- **Architecture**: Drafts/Architecture_FINAL.md\n- **Decision Log**: decision_log.md\n\n### Total Duration\n${totalDurationFormatted}\n\nAll documents have been saved to your Google Drive in the **AI_Product_Factory/${prevData.project_name || 'Project'}** folder.`;\n\n// CLEANUP: Clear static data to prevent state leakage between workflow runs\ndelete staticData.phase0InputState;\ndelete staticData.phase1InputState;\ndelete staticData.phase2InputState;\n\nreturn {\n  json: {\n    project_id: prevData.project_id,\n    project_name: prevData.project_name,\n    session_id: prevData.session_id,\n    status: 'completed',\n    project_state: finalState,\n    state_json: JSON.stringify(finalState, null, 2),\n    vision_document: prevData.vision_document,\n    architecture_document: phase2Result.final_draft,\n    completion_message: completionMessage,\n    telemetry: finalState.telemetry\n  }\n};"
+        "jsCode": "// Final Output - Return completion data\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id,\n    project_name: data.project_name,\n    session_id: data.session_id,\n    status: data.status || 'completed',\n    completion_message: data.completion_message,\n    vision_document: data.vision_document,\n    architecture_document: data.architecture_document,\n    project_state: data.project_state,\n    telemetry: data.telemetry\n  }\n};"
       },
-      "id": "finalize-workflow",
-      "name": "Finalize Workflow",
+      "id": "output-node",
+      "name": "Final Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [3840, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Final Output - Return completion data to caller\n// This node ensures all workflow output is properly structured\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id,\n    project_name: data.project_name,\n    session_id: data.session_id,\n    status: data.status || 'completed',\n    completion_message: data.completion_message,\n    vision_document: data.vision_document,\n    architecture_document: data.architecture_document,\n    project_state: data.project_state,\n    telemetry: data.telemetry\n  }\n};"
-      },
-      "id": "output-node",
-      "name": "Final Output",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [4080, 0]
-    },
-    {
-      "parameters": {
-        "jsCode": "// No resume available - prompt for new project\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    ...data,\n    response_message: data.message || \"No existing projects found. Let's start a new one!\\n\\nPlease provide:\\n1. A Google Drive folder link with your context documents\\n2. Your project name\\n\\nExample: 'My project is called MyApp. Here's the folder: https://drive.google.com/drive/folders/abc123'\",\n    awaiting_input: true\n  }\n};"
+        "jsCode": "// No resume available - prompt for new project\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    ...data,\n    response_message: data.message || \"No existing projects found. Let's start a new one!\\n\\nPlease:\\n1. Upload your context documents (PDF, Markdown, TXT, DOCX)\\n2. Tell me your project name\\n\\nExample: 'My project is called MyApp'\",\n    awaiting_input: true\n  }\n};"
       },
       "id": "no-resume-available",
       "name": "No Resume Available",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1680, -100]
+      "position": [1440, -100]
     },
     {
       "parameters": {
-        "jsCode": "// Intermediate Output - Return response data for flows that need user input\n// This handles resume prompts, info requests, and other intermediate states\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id || null,\n    session_id: data.session_id,\n    status: data.awaiting_input ? 'awaiting_input' : 'intermediate',\n    response_message: data.response_message || data.resume_message || data.message || 'Processing...',\n    awaiting_input: data.awaiting_input || false,\n    resume_available: data.resume_available || false,\n    latest_project: data.latest_project || null,\n    all_projects: data.all_projects || []\n  }\n};"
+        "jsCode": "// Intermediate Output - Return response data for flows that need user input\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id || null,\n    session_id: data.session_id,\n    status: data.awaiting_input ? 'awaiting_input' : 'intermediate',\n    response_message: data.response_message || data.resume_message || data.message || 'Processing...',\n    awaiting_input: data.awaiting_input || false,\n    resume_available: data.resume_available || false,\n    latest_project: data.latest_project || null,\n    all_projects: data.all_projects || []\n  }\n};"
       },
       "id": "merge-responses",
       "name": "Intermediate Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2400, 200]
+      "position": [2160, 200]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "sync_to_postgres",
+            "project_id": "={{ $json.project_id }}",
+            "project_state": "={{ JSON.stringify({ project_id: $json.project_id, project_name: $json.project_name, session_id: $json.session_id, current_phase: 0, phase_status: 'pending', config: $json.config }) }}"
+          }
+        }
+      },
+      "id": "sync-initial-to-dashboard",
+      "name": "Sync Initial State to Dashboard",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1680, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "sync_to_postgres",
+            "project_id": "={{ $json.project_id }}",
+            "project_state": "={{ JSON.stringify({ project_id: $json.project_id, project_name: $json.project_name, session_id: $json.session_id, current_phase: 1, phase_status: 'pending', tech_standards_global: ($json.tech_standards || []).filter(s => s.scope === 'global'), tech_standards_local: ($json.tech_standards || []).filter(s => s.scope === 'local'), total_iterations: 0 }) }}"
+          }
+        }
+      },
+      "id": "sync-phase0-to-dashboard",
+      "name": "Sync Phase 0 Complete to Dashboard",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2880, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "key": "={{ 'projects/' + $json.project_id + '/artifacts/ProductVision_FINAL.md' }}",
+            "content": "={{ $json.vision_document || '' }}",
+            "content_type": "text/markdown"
+          }
+        }
+      },
+      "id": "upload-vision-to-s3",
+      "name": "Upload Vision to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [3360, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "sync_to_postgres",
+            "project_id": "={{ $json.project_id }}",
+            "project_state": "={{ JSON.stringify({ project_id: $json.project_id, project_name: $json.project_name, session_id: $json.session_id, current_phase: 2, phase_status: 'pending', last_iteration_score: $json.vision_score, total_iterations: $json.project_state?.telemetry?.total_iterations || 0 }) }}"
+          }
+        }
+      },
+      "id": "sync-phase1-to-dashboard",
+      "name": "Sync Phase 1 Complete to Dashboard",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [3360, 350],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "key": "={{ 'projects/' + $json.project_id + '/artifacts/Architecture_FINAL.md' }}",
+            "content": "={{ $json.architecture_document || '' }}",
+            "content_type": "text/markdown"
+          }
+        }
+      },
+      "id": "upload-arch-to-s3",
+      "name": "Upload Architecture to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [3840, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "key": "={{ 'projects/' + $json.project_id + '/state/project_state.json' }}",
+            "content": "={{ $json.state_json }}",
+            "content_type": "application/json"
+          }
+        }
+      },
+      "id": "upload-final-state-s3",
+      "name": "Upload Final State to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [3840, 350],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "sync_to_postgres",
+            "project_id": "={{ $json.project_id }}",
+            "project_state": "={{ JSON.stringify({ project_id: $json.project_id, project_name: $json.project_name, session_id: $json.session_id, current_phase: 3, phase_status: 'completed', last_iteration_score: $json.project_state?.phase_2_result?.final_score, total_iterations: $json.telemetry?.total_iterations || 0, total_duration_ms: $json.telemetry?.total_duration_ms || 0, completed_at: new Date().toISOString() }) }}"
+          }
+        }
+      },
+      "id": "sync-final-to-dashboard",
+      "name": "Sync Final State to Dashboard",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [3840, 500],
+      "continueOnFail": true
     }
   ],
   "connections": {
@@ -522,7 +608,7 @@
       "main": [
         [
           {
-            "node": "Find Factory Folder",
+            "node": "List Projects from S3",
             "type": "main",
             "index": 0
           }
@@ -536,18 +622,7 @@
         ]
       ]
     },
-    "Find Factory Folder": {
-      "main": [
-        [
-          {
-            "node": "List Projects",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "List Projects": {
+    "List Projects from S3": {
       "main": [
         [
           {
@@ -573,7 +648,7 @@
       "main": [
         [
           {
-            "node": "Find State File",
+            "node": "Download State from S3",
             "type": "main",
             "index": 0
           }
@@ -587,18 +662,7 @@
         ]
       ]
     },
-    "Find State File": {
-      "main": [
-        [
-          {
-            "node": "Download State",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Download State": {
+    "Download State from S3": {
       "main": [
         [
           {
@@ -653,17 +717,6 @@
       "main": [
         [
           {
-            "node": "Create Project Folder",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create Project Folder": {
-      "main": [
-        [
-          {
             "node": "Create Initial State",
             "type": "main",
             "index": 0
@@ -675,18 +728,23 @@
       "main": [
         [
           {
-            "node": "Save Initial State",
+            "node": "Save Initial State to S3",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Save Initial State": {
+    "Save Initial State to S3": {
       "main": [
         [
           {
             "node": "Ready for Phase 0",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sync Initial State to Dashboard",
             "type": "main",
             "index": 0
           }
@@ -730,18 +788,23 @@
       "main": [
         [
           {
-            "node": "Save State After Phase 0",
+            "node": "Save State After Phase 0 to S3",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Save State After Phase 0": {
+    "Save State After Phase 0 to S3": {
       "main": [
         [
           {
             "node": "Run Phase 1: Vision Loop",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sync Phase 0 Complete to Dashboard",
             "type": "main",
             "index": 0
           }
@@ -766,6 +829,16 @@
             "node": "Run Phase 2: Architecture Loop",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Upload Vision to S3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sync Phase 1 Complete to Dashboard",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -788,6 +861,21 @@
             "node": "Final Output",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "Upload Architecture to S3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upload Final State to S3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Sync Final State to Dashboard",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -808,7 +896,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "1",
+  "versionId": "2",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "ai-product-factory"

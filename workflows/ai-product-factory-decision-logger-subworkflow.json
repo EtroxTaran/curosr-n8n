@@ -44,7 +44,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Decision Logger - Input Validator\n// Validates incoming parameters and prepares logging context\n\nconst input = $input.first().json;\n\n// Validate required fields\nconst operation = input.operation;\nif (!operation) {\n  throw new Error('Missing required field: operation');\n}\n\nconst validOperations = ['log_decision', 'log_iteration', 'log_approval', 'log_phase_start', 'log_phase_end'];\nif (!validOperations.includes(operation)) {\n  throw new Error(`Invalid operation: ${operation}. Must be one of: ${validOperations.join(', ')}`);\n}\n\nconst project_id = input.project_id;\nif (!project_id) {\n  throw new Error('Missing required field: project_id');\n}\n\nconst session_id = input.session_id || 'unknown_session';\nconst phase = input.phase || 'unknown';\nconst entry_type = input.entry_type || operation;\nconst content = input.content || '';\n\n// Parse metadata if it's a string\nlet metadata = {};\nif (input.metadata) {\n  if (typeof input.metadata === 'string') {\n    try {\n      metadata = JSON.parse(input.metadata);\n    } catch (e) {\n      metadata = { raw: input.metadata };\n    }\n  } else {\n    metadata = input.metadata;\n  }\n}\n\n// Generate timestamp\nconst timestamp = new Date().toISOString();\nconst timestampFormatted = new Date().toLocaleString('en-US', {\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit',\n  hour: '2-digit',\n  minute: '2-digit',\n  second: '2-digit',\n  hour12: false\n});\n\n// Generate request ID for tracing\nconst request_id = `log_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;\n\nreturn {\n  json: {\n    operation,\n    project_id,\n    session_id,\n    phase,\n    entry_type,\n    content,\n    metadata,\n    timestamp,\n    timestamp_formatted: timestampFormatted,\n    request_id,\n    folder_path: `AI_Product_Factory/${project_id}`,\n    decision_log_path: `AI_Product_Factory/${project_id}/decision_log.md`\n  }\n};"
+        "jsCode": "// Decision Logger - Input Validator\n// Validates incoming parameters and prepares logging context\n\nconst input = $input.first().json;\n\n// Validate required fields\nconst operation = input.operation;\nif (!operation) {\n  throw new Error('Missing required field: operation');\n}\n\nconst validOperations = ['log_decision', 'log_iteration', 'log_approval', 'log_phase_start', 'log_phase_end', 'log_governance_batch'];\nif (!validOperations.includes(operation)) {\n  throw new Error(`Invalid operation: ${operation}. Must be one of: ${validOperations.join(', ')}`);\n}\n\nconst project_id = input.project_id;\nif (!project_id) {\n  throw new Error('Missing required field: project_id');\n}\n\nconst session_id = input.session_id || 'unknown_session';\nconst phase = input.phase || 'unknown';\nconst entry_type = input.entry_type || operation;\nconst content = input.content || '';\n\n// Parse metadata if it's a string\nlet metadata = {};\nif (input.metadata) {\n  if (typeof input.metadata === 'string') {\n    try {\n      metadata = JSON.parse(input.metadata);\n    } catch (e) {\n      metadata = { raw: input.metadata };\n    }\n  } else {\n    metadata = input.metadata;\n  }\n}\n\n// Generate timestamp\nconst timestamp = new Date().toISOString();\nconst timestampFormatted = new Date().toLocaleString('en-US', {\n  year: 'numeric',\n  month: '2-digit',\n  day: '2-digit',\n  hour: '2-digit',\n  minute: '2-digit',\n  second: '2-digit',\n  hour12: false\n});\n\n// Generate request ID for tracing\nconst request_id = `log_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;\n\n// Extract iteration-related fields for PostgreSQL\nconst iteration = metadata.iteration !== undefined ? parseInt(metadata.iteration) : null;\nconst agent_name = metadata.agent || null;\nconst score = metadata.score !== undefined ? parseFloat(metadata.score) : null;\nconst issues_count = metadata.issues && Array.isArray(metadata.issues) ? metadata.issues.length : null;\n\n// S3 paths\nconst s3_key = `projects/${project_id}/decision_log.md`;\n\nreturn {\n  json: {\n    operation,\n    project_id,\n    session_id,\n    phase,\n    entry_type,\n    content,\n    metadata,\n    timestamp,\n    timestamp_formatted: timestampFormatted,\n    request_id,\n    s3_key,\n    // Fields for PostgreSQL\n    iteration,\n    agent_name,\n    score,\n    issues_count\n  }\n};"
       },
       "id": "validate-input",
       "name": "Input Validator",
@@ -165,6 +165,28 @@
               },
               "renameOutput": true,
               "outputKey": "log_phase_end"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.operation }}",
+                    "rightValue": "log_governance_batch",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "log_governance_batch"
             }
           ]
         },
@@ -184,7 +206,7 @@
       "name": "Format Decision Entry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, -200]
+      "position": [680, -300]
     },
     {
       "parameters": {
@@ -194,7 +216,7 @@
       "name": "Format Iteration Entry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 0]
+      "position": [680, -100]
     },
     {
       "parameters": {
@@ -204,7 +226,7 @@
       "name": "Format Approval Entry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 200]
+      "position": [680, 100]
     },
     {
       "parameters": {
@@ -214,7 +236,7 @@
       "name": "Format Phase Start",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 400]
+      "position": [680, 300]
     },
     {
       "parameters": {
@@ -224,7 +246,17 @@
       "name": "Format Phase End",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [680, 600]
+      "position": [680, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format Governance Batch Entry\n// Creates a markdown entry for batch governance decisions from Tech Stack Configurator\n\nconst data = $input.first().json;\nconst metadata = data.metadata || {};\n\nlet entry = `\\n#### [${data.timestamp_formatted}] Batch Governance Decision\\n\\n`;\n\nentry += `- **Scavenging ID**: ${metadata.scavenging_id || 'N/A'}\\n`;\nentry += `- **Total Technologies**: ${metadata.total_techs || 0}\\n`;\n\n// Summary counts\nconst decisions = metadata.decisions || [];\nconst approvedGlobal = decisions.filter(d => d.action === 'approve' && d.scope === 'global').length;\nconst approvedLocal = decisions.filter(d => d.action === 'approve' && d.scope === 'local').length;\nconst skipped = decisions.filter(d => d.action === 'skip').length;\n\nentry += `- **Approved (Global)**: ${approvedGlobal}\\n`;\nentry += `- **Approved (Local)**: ${approvedLocal}\\n`;\nentry += `- **Skipped**: ${skipped}\\n\\n`;\n\n// Detail each decision\nif (decisions.length > 0) {\n  entry += `**Decisions:**\\n\\n`;\n  entry += `| Technology | Action | Scope | Alternative |\\n`;\n  entry += `|------------|--------|-------|-------------|\\n`;\n  \n  for (const decision of decisions) {\n    const techName = decision.tech_name || decision.tech_id;\n    const action = decision.action || 'skip';\n    const scope = decision.scope || '-';\n    const alt = decision.selected_alternative || '-';\n    entry += `| ${techName} | ${action} | ${scope} | ${alt} |\\n`;\n  }\n  entry += '\\n';\n}\n\nentry += '\\n';\n\nreturn {\n  json: {\n    ...data,\n    formatted_entry: entry,\n    log_section: `Phase ${data.phase}: Batch Governance`\n  }\n};"
+      },
+      "id": "format-governance-batch",
+      "name": "Format Governance Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 700]
     },
     {
       "parameters": {
@@ -238,294 +270,113 @@
     },
     {
       "parameters": {
-        "operation": "search",
-        "folderId": {
+        "workflowId": {
           "__rl": true,
-          "mode": "list",
-          "value": "root"
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
         },
-        "queryString": "={{ 'name = \\'' + $json.project_id.replace(/'/g, \"\\\\'\") + '\\' and mimeType = \\'application/vnd.google-apps.folder\\'' }}",
-        "returnAll": false,
-        "limit": 1,
-        "options": {}
-      },
-      "id": "find-project-folder",
-      "name": "Find Project Folder",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [1140, 200],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "download_artifact",
+            "project_id": "={{ $json.project_id }}",
+            "artifact_type": "decision_log",
+            "filename": "decision_log.md"
+          }
         }
-      }
+      },
+      "id": "download-existing-log-s3",
+      "name": "Download Existing Log from S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1140, 200],
+      "continueOnFail": true
     },
     {
       "parameters": {
-        "jsCode": "// Check if project folder exists and prepare for file operations\n\nconst formattedData = $('Merge Formatted Entries').item.json;\nconst searchResults = $input.first().json;\n\nlet folderId = null;\nlet folderExists = false;\n\n// Check if folder was found\nif (searchResults && searchResults.id) {\n  folderId = searchResults.id;\n  folderExists = true;\n}\n\nreturn {\n  json: {\n    ...formattedData,\n    folder_id: folderId,\n    folder_exists: folderExists,\n    decision_log_filename: 'decision_log.md'\n  }\n};"
+        "jsCode": "// Check if decision log exists in S3 and prepare content\n\nconst formattedData = $('Merge Formatted Entries').item.json;\nconst s3Result = $input.first().json;\n\nlet existingContent = '';\nlet fileExists = false;\n\n// Check if download was successful\nif (s3Result.success && s3Result.content) {\n  existingContent = s3Result.content;\n  fileExists = true;\n} else if (s3Result.error && s3Result.error.includes('NoSuchKey')) {\n  // File doesn't exist yet - that's OK\n  fileExists = false;\n  existingContent = '';\n}\n\n// Build new content\nlet newContent;\nif (fileExists) {\n  // Append to existing\n  newContent = existingContent + formattedData.formatted_entry;\n} else {\n  // Create new log with header\n  const header = `# Decision Log - ${formattedData.project_id}\\n\\n`;\n  const sessionHeader = `## Session: ${formattedData.session_id}\\n**Started**: ${formattedData.timestamp_formatted}\\n`;\n  newContent = header + sessionHeader + formattedData.formatted_entry;\n}\n\nreturn {\n  json: {\n    ...formattedData,\n    file_exists: fileExists,\n    file_content: newContent,\n    action: fileExists ? 'update' : 'create'\n  }\n};"
       },
-      "id": "prepare-file-operation",
-      "name": "Prepare File Operation",
+      "id": "prepare-content",
+      "name": "Prepare Log Content",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1360, 200]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "folder-exists",
-              "leftValue": "={{ $json.folder_exists }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "project_id": "={{ $json.project_id }}",
+            "artifact_type": "decision_log",
+            "filename": "decision_log.md",
+            "content": "={{ $json.file_content }}",
+            "content_type": "text/markdown"
+          }
         }
       },
-      "id": "folder-exists-check",
-      "name": "Folder Exists?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
+      "id": "upload-log-s3",
+      "name": "Upload Decision Log to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
       "position": [1580, 200]
     },
     {
       "parameters": {
-        "operation": "search",
-        "folderId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.folder_id }}"
-        },
-        "queryString": "={{ 'name = \\'decision_log.md\\'' }}",
-        "returnAll": false,
-        "limit": 1,
-        "options": {}
-      },
-      "id": "find-decision-log",
-      "name": "Find Decision Log",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [1820, 100],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Handle case where project folder doesn't exist\n// Return warning but don't fail - allows workflow to continue\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    operation: data.operation,\n    project_id: data.project_id,\n    session_id: data.session_id,\n    status: 'warning',\n    message: `Project folder not found for project: ${data.project_id}. Decision log entry not saved. Please ensure the project is initialized first.`,\n    request_id: data.request_id,\n    formatted_entry: data.formatted_entry,\n    timestamp: data.timestamp\n  }\n};"
-      },
-      "id": "folder-not-found",
-      "name": "Folder Not Found Handler",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1820, 300]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Check if decision_log.md exists and prepare for update or create\n\nconst prevData = $('Prepare File Operation').item.json;\nconst searchResult = $input.first().json;\n\nlet fileExists = false;\nlet fileId = null;\n\nif (searchResult && searchResult.id) {\n  fileExists = true;\n  fileId = searchResult.id;\n}\n\nreturn {\n  json: {\n    ...prevData,\n    file_exists: fileExists,\n    file_id: fileId\n  }\n};"
-      },
-      "id": "check-file-exists",
-      "name": "Check File Exists",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2040, 100]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "file-exists",
-              "leftValue": "={{ $json.file_exists }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "file-exists-check",
-      "name": "File Exists?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [2260, 100]
-    },
-    {
-      "parameters": {
-        "operation": "download",
-        "fileId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.file_id }}"
-        },
-        "options": {
-          "googleFileConversion": {
-            "conversion": {
-              "docsToFormat": "text/plain"
-            }
-          }
-        }
-      },
-      "id": "download-existing-log",
-      "name": "Download Existing Log",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [2500, 0],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Create new decision_log.md with header\n\nconst data = $input.first().json;\n\nconst header = `# Decision Log - ${data.project_id}\\n\\n`;\nconst sessionHeader = `## Session: ${data.session_id}\\n**Started**: ${data.timestamp_formatted}\\n`;\n\nconst newContent = header + sessionHeader + data.formatted_entry;\n\nreturn {\n  json: {\n    ...data,\n    file_content: newContent,\n    action: 'create'\n  }\n};"
-      },
-      "id": "create-new-log",
-      "name": "Create New Log Content",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2500, 200]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Append new entry to existing log\n\nconst prevData = $('Check File Exists').item.json;\nconst downloadedFile = $input.first();\n\n// Get existing content\nlet existingContent = '';\nif (downloadedFile.binary && downloadedFile.binary.data) {\n  existingContent = Buffer.from(downloadedFile.binary.data.data, 'base64').toString('utf8');\n} else if (downloadedFile.json && downloadedFile.json.content) {\n  existingContent = downloadedFile.json.content;\n}\n\n// Append new entry\nconst updatedContent = existingContent + prevData.formatted_entry;\n\nreturn {\n  json: {\n    ...prevData,\n    file_content: updatedContent,\n    action: 'update'\n  }\n};"
-      },
-      "id": "append-to-log",
-      "name": "Append to Existing Log",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2720, 0]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Pass through file content from either create or append path\nconst data = $input.first().json;\nreturn { json: data };"
-      },
-      "id": "merge-content",
-      "name": "Merge Content",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2940, 100]
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "is-create-action",
-              "leftValue": "={{ $json.action }}",
-              "rightValue": "create",
-              "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "action-router",
-      "name": "Create or Update?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [3040, 100]
-    },
-    {
-      "parameters": {
-        "operation": "upload",
-        "folderId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.folder_id }}"
-        },
-        "name": "decision_log.md",
-        "contentPropertyName": "={{ $json.file_content }}",
-        "options": {
-          "mimeType": "text/markdown"
-        }
-      },
-      "id": "upload-log-create",
-      "name": "Upload Decision Log",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [3160, 0],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "update",
-        "fileId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.file_id }}"
-        },
-        "contentPropertyName": "={{ $json.file_content }}",
-        "options": {}
-      },
-      "id": "update-log",
-      "name": "Update Decision Log",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [3160, 200],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Prepare final output based on action taken\n\nconst data = $input.first().json;\n\nlet outputData;\n\n// Determine which path we came from\nif (data.action === 'create') {\n  outputData = $('Merge Content').item.json;\n} else if (data.action === 'update') {\n  outputData = $('Merge Content').item.json;\n} else {\n  // Use input data\n  outputData = data;\n}\n\nreturn {\n  json: {\n    operation: outputData.operation,\n    project_id: outputData.project_id,\n    session_id: outputData.session_id,\n    phase: outputData.phase,\n    status: 'success',\n    message: `Decision log ${outputData.action === 'create' ? 'created' : 'updated'} successfully`,\n    request_id: outputData.request_id,\n    file_id: data.id || outputData.file_id,\n    timestamp: outputData.timestamp,\n    log_section: outputData.log_section\n  }\n};"
+        "jsCode": "// Build success output after S3 upload\n\nconst contentData = $('Prepare Log Content').item.json;\nconst s3Result = $input.first().json;\n\nconst success = s3Result.success || false;\n\nreturn {\n  json: {\n    operation: contentData.operation,\n    project_id: contentData.project_id,\n    session_id: contentData.session_id,\n    phase: contentData.phase,\n    status: success ? 'success' : 'error',\n    message: success \n      ? `Decision log ${contentData.action === 'create' ? 'created' : 'updated'} successfully in S3`\n      : `Failed to save decision log: ${s3Result.error || 'Unknown error'}`,\n    request_id: contentData.request_id,\n    s3_key: contentData.s3_key,\n    timestamp: contentData.timestamp,\n    log_section: contentData.log_section,\n    file_content: contentData.file_content,\n    action: contentData.action\n  }\n};"
       },
       "id": "success-output",
       "name": "Success Output Builder",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3380, 100]
+      "position": [1800, 200]
     },
     {
       "parameters": {
-        "jsCode": "// Final Output - Return decision logger results to caller workflow\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    operation: data.operation,\n    project_id: data.project_id,\n    session_id: data.session_id,\n    phase: data.phase,\n    status: data.status || 'completed',\n    message: data.message || 'Decision logged successfully',\n    request_id: data.request_id,\n    file_id: data.file_id || null,\n    timestamp: data.timestamp,\n    log_section: data.log_section || null\n  }\n};"
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "insert_decision_log_entry",
+            "project_id": "={{ $('Input Validator').item.json.project_id }}",
+            "session_id": "={{ $('Input Validator').item.json.session_id }}",
+            "entry_type": "={{ $('Input Validator').item.json.entry_type }}",
+            "phase": "={{ $('Input Validator').item.json.phase }}",
+            "iteration": "={{ $('Input Validator').item.json.iteration }}",
+            "content": "={{ $('Input Validator').item.json.content }}",
+            "metadata": "={{ JSON.stringify($('Input Validator').item.json.metadata) }}",
+            "agent_name": "={{ $('Input Validator').item.json.agent_name }}",
+            "score": "={{ $('Input Validator').item.json.score }}",
+            "issues_count": "={{ $('Input Validator').item.json.issues_count }}"
+          }
+        }
+      },
+      "id": "sync-postgres-entry",
+      "name": "Sync to PostgreSQL",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2020, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build final output with sync results\n\nconst successData = $('Success Output Builder').item.json;\nconst pgResult = $input.first().json;\n\nconst pgSuccess = pgResult.success || false;\n\nreturn {\n  json: {\n    operation: successData.operation,\n    project_id: successData.project_id,\n    session_id: successData.session_id,\n    phase: successData.phase,\n    status: successData.status,\n    message: successData.message,\n    request_id: successData.request_id,\n    s3_key: successData.s3_key,\n    timestamp: successData.timestamp,\n    log_section: successData.log_section,\n    s3_synced: successData.status === 'success',\n    postgres_synced: pgSuccess\n  }\n};"
       },
       "id": "output-merge",
       "name": "Subworkflow Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3600, 200]
+      "position": [2240, 200]
     }
   ],
   "connections": {
@@ -587,6 +438,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Format Governance Batch",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -645,182 +503,51 @@
         ]
       ]
     },
+    "Format Governance Batch": {
+      "main": [
+        [
+          {
+            "node": "Merge Formatted Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Merge Formatted Entries": {
       "main": [
         [
           {
-            "node": "Find Project Folder",
+            "node": "Download Existing Log from S3",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Find Project Folder": {
+    "Download Existing Log from S3": {
       "main": [
         [
           {
-            "node": "Prepare File Operation",
+            "node": "Prepare Log Content",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare File Operation": {
+    "Prepare Log Content": {
       "main": [
         [
           {
-            "node": "Folder Exists?",
+            "node": "Upload Decision Log to S3",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Folder Exists?": {
-      "main": [
-        [
-          {
-            "node": "Find Decision Log",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Folder Not Found Handler",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Find Decision Log": {
-      "main": [
-        [
-          {
-            "node": "Check File Exists",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Folder Not Found Handler": {
-      "main": [
-        [
-          {
-            "node": "Subworkflow Output",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check File Exists": {
-      "main": [
-        [
-          {
-            "node": "File Exists?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "File Exists?": {
-      "main": [
-        [
-          {
-            "node": "Download Existing Log",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Create New Log Content",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Download Existing Log": {
-      "main": [
-        [
-          {
-            "node": "Append to Existing Log",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Append to Existing Log": {
-      "main": [
-        [
-          {
-            "node": "Merge Content",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create New Log Content": {
-      "main": [
-        [
-          {
-            "node": "Merge Content",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge Content": {
-      "main": [
-        [
-          {
-            "node": "Create or Update?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create or Update?": {
-      "main": [
-        [
-          {
-            "node": "Upload Decision Log",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Update Decision Log",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Upload Decision Log": {
-      "main": [
-        [
-          {
-            "node": "Success Output Builder",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Update Decision Log": {
+    "Upload Decision Log to S3": {
       "main": [
         [
           {
@@ -832,6 +559,17 @@
       ]
     },
     "Success Output Builder": {
+      "main": [
+        [
+          {
+            "node": "Sync to PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync to PostgreSQL": {
       "main": [
         [
           {
@@ -847,7 +585,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "1",
+  "versionId": "2",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "ai-product-factory"

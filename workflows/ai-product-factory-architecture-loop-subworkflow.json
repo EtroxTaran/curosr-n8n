@@ -515,7 +515,61 @@
       "name": "Subworkflow Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4640, 0]
+      "position": [4920, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "project_id": "={{ $json.project_id }}",
+            "artifact_type": "architecture_final",
+            "filename": "Architecture_FINAL.md",
+            "content": "={{ $json.final_draft || '' }}",
+            "content_type": "text/markdown"
+          }
+        }
+      },
+      "id": "upload-final-arch-s3",
+      "name": "Upload Final Architecture to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [4520, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "project_id": "={{ $json.project_id }}",
+            "artifact_type": "iteration",
+            "phase": "architecture",
+            "iteration": "={{ $json.total_iterations }}",
+            "filename": "iteration_summary.json",
+            "content": "={{ JSON.stringify($json.telemetry || {}) }}",
+            "content_type": "application/json"
+          }
+        }
+      },
+      "id": "upload-arch-telemetry-s3",
+      "name": "Upload Architecture Telemetry to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [4520, 350],
+      "continueOnFail": true
     }
   ],
   "connections": {
@@ -746,7 +800,12 @@
       "main": [
         [
           {
-            "node": "Subworkflow Output",
+            "node": "Upload Final Architecture to S3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upload Architecture Telemetry to S3",
             "type": "main",
             "index": 0
           }
@@ -878,6 +937,33 @@
       ]
     },
     "Human Accepted Output": {
+      "main": [
+        [
+          {
+            "node": "Upload Final Architecture to S3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upload Architecture Telemetry to S3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Final Architecture to S3": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Architecture Telemetry to S3": {
       "main": [
         [
           {

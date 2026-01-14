@@ -14,11 +14,7 @@
               "type": "string"
             },
             {
-              "name": "drive_folder_id",
-              "type": "string"
-            },
-            {
-              "name": "uploaded_files",
+              "name": "input_files",
               "type": "string"
             }
           ]
@@ -32,7 +28,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Context Scavenging - State Initializer\n// Validates input and initializes scavenging state\n\nconst input = $input.first().json;\n\n// Validate required fields\nif (!input.project_id) {\n  throw new Error('Missing required field: project_id');\n}\n\nif (!input.session_id) {\n  throw new Error('Missing required field: session_id');\n}\n\nif (!input.drive_folder_id && !input.uploaded_files) {\n  throw new Error('Must provide either drive_folder_id or uploaded_files');\n}\n\n// Parse uploaded files if provided\nlet uploadedFiles = [];\nif (input.uploaded_files) {\n  if (typeof input.uploaded_files === 'string') {\n    try {\n      uploadedFiles = JSON.parse(input.uploaded_files);\n    } catch (e) {\n      uploadedFiles = [];\n    }\n  } else if (Array.isArray(input.uploaded_files)) {\n    uploadedFiles = input.uploaded_files;\n  }\n}\n\n// Generate unique scavenging session ID\nconst scavenging_id = 'scav_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\nreturn {\n  json: {\n    project_id: input.project_id,\n    session_id: input.session_id,\n    scavenging_id,\n    drive_folder_id: input.drive_folder_id || null,\n    uploaded_files: uploadedFiles,\n    has_drive_folder: !!input.drive_folder_id,\n    has_uploaded_files: uploadedFiles.length > 0,\n    documents_processed: 0,\n    standards_found: [],\n    start_time: new Date().toISOString(),\n    status: 'initializing'\n  }\n};"
+        "jsCode": "// Context Scavenging - State Initializer\n// Validates input and initializes scavenging state (S3-only, no Google Drive)\n\nconst input = $input.first().json;\n\n// Validate required fields\nif (!input.project_id) {\n  throw new Error('Missing required field: project_id');\n}\n\nif (!input.session_id) {\n  throw new Error('Missing required field: session_id');\n}\n\n// Parse input files (from S3)\nlet inputFiles = [];\nif (input.input_files) {\n  if (typeof input.input_files === 'string') {\n    try {\n      inputFiles = JSON.parse(input.input_files);\n    } catch (e) {\n      inputFiles = [];\n    }\n  } else if (Array.isArray(input.input_files)) {\n    inputFiles = input.input_files;\n  }\n}\n\nif (inputFiles.length === 0) {\n  throw new Error('No input files provided. Upload documents to S3 first.');\n}\n\n// Generate unique scavenging session ID\nconst scavenging_id = 'scav_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\nreturn {\n  json: {\n    project_id: input.project_id,\n    session_id: input.session_id,\n    scavenging_id,\n    input_files: inputFiles,\n    total_files: inputFiles.length,\n    documents_processed: 0,\n    standards_found: [],\n    start_time: new Date().toISOString(),\n    status: 'initializing'\n  }\n};"
       },
       "id": "state-initializer",
       "name": "State Initializer",
@@ -42,71 +38,13 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "has-drive-folder",
-              "leftValue": "={{ $json.has_drive_folder }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "check-drive-folder",
-      "name": "Has Drive Folder?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [440, 0]
-    },
-    {
-      "parameters": {
-        "resource": "fileFolder",
-        "operation": "search",
-        "queryString": "={{ \"'\" + $json.drive_folder_id + \"' in parents\" }}",
-        "returnAll": true,
-        "options": {}
-      },
-      "id": "list-drive-files",
-      "name": "List Drive Files",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [680, -100],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Handle case with no drive folder - use only uploaded files\n\nconst state = $input.first().json;\n\nreturn {\n  json: {\n    ...state,\n    drive_files: [],\n    status: 'processing_uploads_only'\n  }\n};"
-      },
-      "id": "no-drive-folder",
-      "name": "No Drive Folder Handler",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [680, 100]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Filter and prepare documents for processing\n\nconst state = $('State Initializer').item.json;\nconst driveFiles = $input.all().map(item => item.json);\n\n// Filter for processable document types\nconst supportedMimeTypes = [\n  'application/pdf',\n  'application/vnd.google-apps.document',\n  'text/plain',\n  'text/markdown',\n  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',\n  'application/msword'\n];\n\nconst supportedExtensions = ['.md', '.txt', '.pdf', '.doc', '.docx'];\n\nconst processableFiles = driveFiles.filter(file => {\n  if (supportedMimeTypes.includes(file.mimeType)) return true;\n  const name = file.name || '';\n  return supportedExtensions.some(ext => name.toLowerCase().endsWith(ext));\n});\n\n// Combine with uploaded files\nconst allDocuments = [\n  ...processableFiles.map(f => ({\n    id: f.id,\n    name: f.name,\n    source: 'google_drive',\n    mimeType: f.mimeType\n  })),\n  ...state.uploaded_files.map((f, i) => ({\n    id: `upload_${i}`,\n    name: f.name || `uploaded_file_${i}`,\n    source: 'upload',\n    content: f.content || ''\n  }))\n];\n\nreturn {\n  json: {\n    ...state,\n    documents: allDocuments,\n    total_documents: allDocuments.length,\n    status: 'ready_for_processing'\n  }\n};"
+        "jsCode": "// Prepare documents from S3 input files for processing\n\nconst state = $input.first().json;\nconst inputFiles = state.input_files || [];\n\n// Map input files to document format\nconst documents = inputFiles.map((file, index) => ({\n  id: `s3_${index}_${Date.now()}`,\n  key: file.key,\n  name: file.name,\n  size: file.size,\n  contentType: file.contentType,\n  source: 's3',\n  uploadedAt: file.uploadedAt\n}));\n\nreturn {\n  json: {\n    ...state,\n    documents,\n    total_documents: documents.length,\n    status: 'ready_for_processing'\n  }\n};"
       },
       "id": "prepare-documents",
       "name": "Prepare Documents",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [920, 0]
+      "position": [440, 0]
     },
     {
       "parameters": {
@@ -119,94 +57,48 @@
       "name": "Document Batch Processor",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [1140, 0]
+      "position": [660, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare document for Scavenger Agent\n// Extract content based on source type\n\nconst state = $('Prepare Documents').item.json;\nconst document = $input.first().json;\n\nlet documentContent = '';\n\nif (document.source === 'upload' && document.content) {\n  documentContent = document.content;\n} else {\n  // For Google Drive files, we need to download\n  // This will be handled by the conditional node\n  documentContent = '<<NEEDS_DOWNLOAD>>';\n}\n\nreturn {\n  json: {\n    ...state,\n    current_document: document,\n    document_content: documentContent,\n    needs_download: documentContent === '<<NEEDS_DOWNLOAD>>'\n  }\n};"
+        "jsCode": "// Prepare document for S3 download\n\nconst state = $('Prepare Documents').item.json;\nconst batchItem = $input.first().json;\n\n// Find the current document in the documents array\nconst documents = state.documents || [];\nconst currentIndex = $('Document Batch Processor').context.currentRunIndex || 0;\nconst document = documents[currentIndex] || batchItem;\n\nreturn {\n  json: {\n    ...state,\n    current_document: document,\n    current_index: currentIndex\n  }\n};"
       },
       "id": "prepare-single-doc",
       "name": "Prepare Single Document",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1360, 0]
+      "position": [880, 0]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "needs-download",
-              "leftValue": "={{ $json.needs_download }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        }
-      },
-      "id": "check-download",
-      "name": "Needs Download?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [1580, 0]
-    },
-    {
-      "parameters": {
-        "resource": "file",
-        "operation": "download",
-        "fileId": {
+        "workflowId": {
           "__rl": true,
-          "mode": "id",
-          "value": "={{ $json.current_document.id }}"
+          "mode": "name",
+          "value": "AI Product Factory - S3 Operations"
         },
-        "options": {
-          "googleFileConversion": {
-            "conversion": {
-              "docsToFormat": "text/plain"
-            }
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "download_artifact",
+            "key": "={{ $json.current_document.key }}"
           }
         }
       },
-      "id": "download-document",
-      "name": "Download Document",
-      "type": "n8n-nodes-base.googleDrive",
-      "typeVersion": 3,
-      "position": [1820, -100],
-      "credentials": {
-        "googleDriveOAuth2Api": {
-          "id": "google-drive-oauth2",
-          "name": "Google Drive OAuth2"
-        }
-      }
+      "id": "download-from-s3",
+      "name": "Download from S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1100, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Extract text content from downloaded file\n\nconst prevState = $('Prepare Single Document').item.json;\nconst downloadedFile = $input.first();\n\nlet textContent = '';\n\n// Extract text from binary data\nif (downloadedFile.binary && downloadedFile.binary.data) {\n  textContent = Buffer.from(downloadedFile.binary.data.data, 'base64').toString('utf8');\n} else if (downloadedFile.json && downloadedFile.json.content) {\n  textContent = downloadedFile.json.content;\n}\n\n// Limit content length to prevent token overflow\nconst maxLength = 15000;\nif (textContent.length > maxLength) {\n  textContent = textContent.substring(0, maxLength) + '\\n\\n[Content truncated...]';\n}\n\nreturn {\n  json: {\n    ...prevState,\n    document_content: textContent,\n    content_length: textContent.length,\n    needs_download: false\n  }\n};"
+        "jsCode": "// Extract text content from downloaded S3 file\n\nconst prevState = $('Prepare Single Document').item.json;\nconst s3Response = $input.first().json;\n\nlet textContent = '';\n\n// Extract content from S3 response\nif (s3Response.content) {\n  textContent = s3Response.content;\n} else if (s3Response.data) {\n  // Handle base64 encoded content\n  if (typeof s3Response.data === 'string') {\n    try {\n      textContent = Buffer.from(s3Response.data, 'base64').toString('utf8');\n    } catch (e) {\n      textContent = s3Response.data;\n    }\n  } else {\n    textContent = JSON.stringify(s3Response.data);\n  }\n}\n\n// Handle PDF content (may need special parsing)\nconst contentType = prevState.current_document.contentType || '';\nif (contentType === 'application/pdf' && !textContent) {\n  textContent = '[PDF content - text extraction may be limited]';\n}\n\n// Limit content length to prevent token overflow\nconst maxLength = 15000;\nif (textContent.length > maxLength) {\n  textContent = textContent.substring(0, maxLength) + '\\n\\n[Content truncated...]';\n}\n\n// Store in static data for later retrieval\nconst staticData = $getWorkflowStaticData('global');\nstaticData.currentDocumentState = {\n  project_id: prevState.project_id,\n  session_id: prevState.session_id,\n  scavenging_id: prevState.scavenging_id,\n  current_document: prevState.current_document,\n  document_content: textContent\n};\n\nreturn {\n  json: {\n    ...prevState,\n    document_content: textContent,\n    content_length: textContent.length\n  }\n};"
       },
       "id": "extract-content",
       "name": "Extract Text Content",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2040, -100]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Store current document state in static data before passing to Scavenger Agent\n// This allows the Parse Extracted Standards node to access the document info\n\nconst inputData = $input.first().json;\n\n// Store in static data for later retrieval\nconst staticData = $getWorkflowStaticData('global');\nstaticData.currentDocumentState = {\n  project_id: inputData.project_id,\n  session_id: inputData.session_id,\n  scavenging_id: inputData.scavenging_id,\n  current_document: inputData.current_document,\n  document_content: inputData.document_content\n};\n\n// Pass through the data\nreturn {\n  json: inputData\n};"
-      },
-      "id": "merge-content",
-      "name": "Merge Content",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [2260, 0]
+      "position": [1320, 0]
     },
     {
       "parameters": {
@@ -219,7 +111,7 @@
       "name": "Scavenger Agent",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.7,
-      "position": [2500, 0]
+      "position": [1540, 0]
     },
     {
       "parameters": {
@@ -233,7 +125,7 @@
       "name": "Claude 3.5 Sonnet",
       "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
       "typeVersion": 1,
-      "position": [2500, 220],
+      "position": [1540, 220],
       "credentials": {
         "openRouterApi": {
           "id": "openrouter-api",
@@ -243,127 +135,193 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse Scavenger Agent response and extract standards\n// Accumulate standards across all document iterations using static data\n\n// Get state from the Scavenger Agent's input (which came from Merge Content)\nconst agentResponse = $input.first().json;\nconst responseText = agentResponse.output || agentResponse.text || '';\n\n// Get the previous state from static data or try to access from execution context\nconst staticData = $getWorkflowStaticData('global');\n\n// Retrieve the current document state that was stored before calling the agent\nconst prevState = staticData.currentDocumentState || {};\n\n// Try to parse JSON from response\nlet extractedStandards = [];\ntry {\n  // Try direct parse\n  extractedStandards = JSON.parse(responseText);\n} catch (e) {\n  // Try to extract JSON from markdown code block\n  const jsonMatch = responseText.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) {\n    try {\n      extractedStandards = JSON.parse(jsonMatch[1].trim());\n    } catch (e2) {\n      // Try to find any JSON array in the response\n      const arrayMatch = responseText.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/);\n      if (arrayMatch) {\n        try {\n          extractedStandards = JSON.parse(arrayMatch[0]);\n        } catch (e3) {\n          extractedStandards = [];\n        }\n      }\n    }\n  }\n}\n\n// Ensure it's an array\nif (!Array.isArray(extractedStandards)) {\n  extractedStandards = extractedStandards ? [extractedStandards] : [];\n}\n\n// Add document source to each standard\nconst currentDoc = prevState.current_document || { name: 'unknown', id: 'unknown' };\nconst standardsWithSource = extractedStandards.map(std => ({\n  ...std,\n  document_name: currentDoc.name,\n  document_id: currentDoc.id,\n  extracted_at: new Date().toISOString()\n}));\n\n// Accumulate standards in workflow static data\nif (!staticData.accumulatedStandards) {\n  staticData.accumulatedStandards = [];\n}\nstaticData.accumulatedStandards.push(...standardsWithSource);\nstaticData.lastProcessedState = {\n  project_id: prevState.project_id || 'unknown',\n  session_id: prevState.session_id || 'unknown',\n  scavenging_id: prevState.scavenging_id || 'unknown'\n};\n\nreturn {\n  json: {\n    project_id: prevState.project_id || 'unknown',\n    session_id: prevState.session_id || 'unknown',\n    scavenging_id: prevState.scavenging_id || 'unknown',\n    document_name: currentDoc.name,\n    standards_count: standardsWithSource.length,\n    standards: standardsWithSource,\n    accumulated_count: staticData.accumulatedStandards.length\n  }\n};"
+        "jsCode": "// Parse Scavenger Agent response and extract standards\n// Accumulate standards across all document iterations using static data\n\nconst agentResponse = $input.first().json;\nconst responseText = agentResponse.output || agentResponse.text || '';\n\n// Get the previous state from static data\nconst staticData = $getWorkflowStaticData('global');\nconst prevState = staticData.currentDocumentState || {};\n\n// Try to parse JSON from response\nlet extractedStandards = [];\ntry {\n  extractedStandards = JSON.parse(responseText);\n} catch (e) {\n  // Try to extract JSON from markdown code block\n  const jsonMatch = responseText.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) {\n    try {\n      extractedStandards = JSON.parse(jsonMatch[1].trim());\n    } catch (e2) {\n      const arrayMatch = responseText.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/);\n      if (arrayMatch) {\n        try {\n          extractedStandards = JSON.parse(arrayMatch[0]);\n        } catch (e3) {\n          extractedStandards = [];\n        }\n      }\n    }\n  }\n}\n\n// Ensure it's an array\nif (!Array.isArray(extractedStandards)) {\n  extractedStandards = extractedStandards ? [extractedStandards] : [];\n}\n\n// Add document source and unique ID to each standard\nconst currentDoc = prevState.current_document || { name: 'unknown', key: 'unknown' };\nconst standardsWithSource = extractedStandards.map((std, idx) => ({\n  id: `tech_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,\n  ...std,\n  document_name: currentDoc.name,\n  document_key: currentDoc.key,\n  extracted_at: new Date().toISOString()\n}));\n\n// Accumulate standards in workflow static data\nif (!staticData.accumulatedStandards) {\n  staticData.accumulatedStandards = [];\n}\nstaticData.accumulatedStandards.push(...standardsWithSource);\nstaticData.lastProcessedState = {\n  project_id: prevState.project_id || 'unknown',\n  session_id: prevState.session_id || 'unknown',\n  scavenging_id: prevState.scavenging_id || 'unknown'\n};\n\nreturn {\n  json: {\n    project_id: prevState.project_id || 'unknown',\n    session_id: prevState.session_id || 'unknown',\n    scavenging_id: prevState.scavenging_id || 'unknown',\n    document_name: currentDoc.name,\n    standards_count: standardsWithSource.length,\n    standards: standardsWithSource,\n    accumulated_count: staticData.accumulatedStandards.length\n  }\n};"
       },
       "id": "parse-standards",
       "name": "Parse Extracted Standards",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2720, 0]
+      "position": [1760, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate all extracted standards from static data\n// This node is triggered when batch processing is complete\n\nconst input = $input.first().json;\n\n// Read accumulated standards from workflow static data\nconst staticData = $getWorkflowStaticData('global');\nconst allStandards = staticData.accumulatedStandards || [];\nconst lastState = staticData.lastProcessedState || {};\n\n// CLEANUP: Clear static data to prevent state leakage between workflow runs\ndelete staticData.accumulatedStandards;\ndelete staticData.lastProcessedState;\ndelete staticData.currentDocumentState;\n\n// Deduplicate by name (keep highest confidence)\nconst standardsMap = new Map();\nallStandards.forEach(std => {\n  const key = (std.name || '').toLowerCase();\n  if (!standardsMap.has(key) || (std.confidence || 0) > (standardsMap.get(key).confidence || 0)) {\n    standardsMap.set(key, std);\n  }\n});\n\nconst uniqueStandards = Array.from(standardsMap.values());\n\n// Use state from last processed item or from input\nconst project_id = lastState.project_id || input.project_id || 'unknown';\nconst session_id = lastState.session_id || input.session_id || 'unknown';\nconst scavenging_id = lastState.scavenging_id || input.scavenging_id || 'unknown';\n\nreturn {\n  json: {\n    project_id,\n    session_id,\n    scavenging_id,\n    total_standards: uniqueStandards.length,\n    standards: uniqueStandards,\n    status: uniqueStandards.length > 0 ? 'standards_extracted' : 'no_standards_found'\n  }\n};"
+        "jsCode": "// Aggregate all extracted standards from static data\n// Deduplicate and prepare for Perplexity enrichment\n\nconst input = $input.first().json;\n\n// Read accumulated standards from workflow static data\nconst staticData = $getWorkflowStaticData('global');\nconst allStandards = staticData.accumulatedStandards || [];\nconst lastState = staticData.lastProcessedState || {};\n\n// CLEANUP: Clear static data to prevent state leakage\ndelete staticData.accumulatedStandards;\ndelete staticData.lastProcessedState;\ndelete staticData.currentDocumentState;\n\n// Deduplicate by name (keep highest confidence)\nconst standardsMap = new Map();\nallStandards.forEach(std => {\n  const key = (std.name || '').toLowerCase();\n  if (!standardsMap.has(key) || (std.confidence || 0) > (standardsMap.get(key).confidence || 0)) {\n    standardsMap.set(key, std);\n  }\n});\n\nconst uniqueStandards = Array.from(standardsMap.values());\n\nconst project_id = lastState.project_id || input.project_id || 'unknown';\nconst session_id = lastState.session_id || input.session_id || 'unknown';\nconst scavenging_id = lastState.scavenging_id || input.scavenging_id || 'unknown';\n\nreturn {\n  json: {\n    project_id,\n    session_id,\n    scavenging_id,\n    total_standards: uniqueStandards.length,\n    standards: uniqueStandards,\n    status: uniqueStandards.length > 0 ? 'standards_extracted' : 'no_standards_found'\n  }\n};"
       },
       "id": "aggregate-standards",
       "name": "Aggregate All Standards",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [2960, 0]
+      "position": [2000, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Prepare standards for tech governance approval\n// Split into items for individual processing\n\nconst state = $input.first().json;\nconst standards = state.standards || [];\n\nif (standards.length === 0) {\n  return {\n    json: {\n      ...state,\n      has_standards: false,\n      message: 'No technical standards found in documents'\n    }\n  };\n}\n\n// Return each standard as a separate item for governance processing\nreturn standards.map((std, index) => ({\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    scavenging_id: state.scavenging_id,\n    standard_index: index,\n    total_standards: standards.length,\n    standard: std,\n    requires_approval: true\n  }\n}));"
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-standards",
+              "leftValue": "={{ $json.total_standards }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
       },
-      "id": "split-for-governance",
-      "name": "Split for Governance",
+      "id": "has-standards-check",
+      "name": "Has Standards?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2220, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// No standards found - return early\n\nconst state = $input.first().json;\n\nreturn {\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    scavenging_id: state.scavenging_id,\n    phase: 0,\n    status: 'completed',\n    summary: {\n      total_standards_found: 0,\n      approved_global: 0,\n      approved_local: 0,\n      skipped: 0\n    },\n    processed_standards: [],\n    message: 'No technical standards found in uploaded documents',\n    completed_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "no-standards-handler",
+      "name": "No Standards Handler",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3180, 0]
+      "position": [2460, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split standards for Perplexity enrichment\n// Each standard gets 3 alternatives researched\n\nconst state = $input.first().json;\nconst standards = state.standards || [];\n\n// Return each standard as separate item for parallel Perplexity calls\nreturn standards.map((std, index) => ({\n  json: {\n    project_id: state.project_id,\n    session_id: state.session_id,\n    scavenging_id: state.scavenging_id,\n    standard_index: index,\n    total_standards: standards.length,\n    standard: std\n  }\n}));"
+      },
+      "id": "split-for-perplexity",
+      "name": "Split for Perplexity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2460, -100]
+    },
+    {
+      "parameters": {
+        "batchSize": 3,
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "perplexity-batch",
+      "name": "Perplexity Batch (3 parallel)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2680, -100]
     },
     {
       "parameters": {
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "Titan - Graphiti Operations"
+          "value": "AI Product Factory - Perplexity Research"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "operation": "search_facts",
-            "query": "={{ 'technology standard ' + $json.standard.name }}",
-            "group_ids": "[\"global_standards\"]"
+            "research_type": "best_practices",
+            "query": "={{ 'top 3 alternatives to ' + $json.standard.name + ' for ' + ($json.standard.category || 'software development') + '. List name, brief description, pros and cons for each.' }}",
+            "max_results": "3"
           }
         }
       },
-      "id": "check-existing-standard",
-      "name": "Check Existing Standard",
+      "id": "perplexity-research",
+      "name": "Fetch Alternatives (Perplexity)",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [3420, 0]
+      "position": [2900, -100]
     },
     {
       "parameters": {
-        "jsCode": "// Check if standard already exists and prepare governance decision\n\nconst prevData = $('Split for Governance').item.json;\nconst graphitiResult = $input.first().json;\n\n// Check if we found existing standards\nconst existingResults = graphitiResult.result || [];\nconst alreadyExists = existingResults.length > 0;\n\n// Determine if this needs user approval\nlet needsApproval = true;\nlet existingScope = null;\n\nif (alreadyExists) {\n  // Standard already in knowledge graph\n  needsApproval = false;\n  existingScope = 'global'; // If found in global_standards search\n}\n\nreturn {\n  json: {\n    ...prevData,\n    already_exists: alreadyExists,\n    existing_scope: existingScope,\n    needs_approval: needsApproval,\n    graphiti_results: existingResults\n  }\n};"
+        "jsCode": "// Parse Perplexity response and extract alternatives\n\nconst prevData = $('Perplexity Batch (3 parallel)').item.json;\nconst perplexityResult = $input.first().json;\n\n// Parse alternatives from Perplexity response\nlet alternatives = [];\nconst responseText = perplexityResult.result || perplexityResult.output || perplexityResult.text || '';\n\n// Try to extract structured alternatives\ntry {\n  // Look for JSON in response\n  const jsonMatch = responseText.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (jsonMatch) {\n    alternatives = JSON.parse(jsonMatch[1].trim());\n  } else {\n    // Parse numbered list format\n    const lines = responseText.split('\\n');\n    let currentAlt = null;\n    \n    for (const line of lines) {\n      const nameMatch = line.match(/^\\d+\\.\\s*\\*?\\*?([^:*]+)\\*?\\*?[:\\s]/);\n      if (nameMatch) {\n        if (currentAlt) alternatives.push(currentAlt);\n        currentAlt = {\n          name: nameMatch[1].trim(),\n          description: '',\n          pros: [],\n          cons: []\n        };\n      } else if (currentAlt) {\n        const prosMatch = line.match(/pros?[:\\s]+(.+)/i);\n        const consMatch = line.match(/cons?[:\\s]+(.+)/i);\n        const descMatch = line.match(/description[:\\s]+(.+)/i);\n        \n        if (prosMatch) {\n          currentAlt.pros = prosMatch[1].split(',').map(p => p.trim());\n        } else if (consMatch) {\n          currentAlt.cons = consMatch[1].split(',').map(c => c.trim());\n        } else if (descMatch) {\n          currentAlt.description = descMatch[1].trim();\n        } else if (!currentAlt.description && line.trim()) {\n          currentAlt.description = line.trim();\n        }\n      }\n    }\n    if (currentAlt) alternatives.push(currentAlt);\n  }\n} catch (e) {\n  // Fallback: create minimal alternatives from text\n  const nameMatches = responseText.match(/\\*\\*([^*]+)\\*\\*/g) || [];\n  alternatives = nameMatches.slice(0, 3).map(match => ({\n    name: match.replace(/\\*/g, '').trim(),\n    description: 'Alternative technology option',\n    pros: [],\n    cons: []\n  }));\n}\n\n// Ensure we have valid array with max 3 items\nif (!Array.isArray(alternatives)) alternatives = [];\nalternatives = alternatives.slice(0, 3);\n\n// Add alternatives to the standard\nconst enrichedStandard = {\n  ...prevData.standard,\n  alternatives\n};\n\nreturn {\n  json: {\n    ...prevData,\n    standard: enrichedStandard,\n    alternatives_count: alternatives.length\n  }\n};"
       },
-      "id": "check-governance",
-      "name": "Check Governance Status",
+      "id": "parse-alternatives",
+      "name": "Parse Alternatives",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [3660, 0]
+      "position": [3120, -100]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
+        "jsCode": "// Aggregate all enriched standards after Perplexity batch completes\n\nconst allItems = $input.all();\n\n// Get common data from first item\nconst firstItem = allItems[0]?.json || {};\n\n// Collect all enriched standards\nconst enrichedStandards = allItems.map(item => item.json.standard);\n\nreturn {\n  json: {\n    project_id: firstItem.project_id,\n    session_id: firstItem.session_id,\n    scavenging_id: firstItem.scavenging_id,\n    detected_stack: enrichedStandards,\n    total_standards: enrichedStandards.length\n  }\n};"
+      },
+      "id": "aggregate-enriched",
+      "name": "Aggregate Enriched Standards",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3360, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build Governance Payload for batch UI approval\n// This creates the JSON structure expected by the GovernanceWidget\n\nconst state = $input.first().json;\n\n// Get webhook base URL from environment\nconst webhookBaseUrl = $env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook';\nconst webhookUrl = `${webhookBaseUrl}/governance-batch-${state.scavenging_id}`;\n\n// Build the governance payload matching GovernancePayloadSchema\nconst governancePayload = {\n  type: 'governance_request',\n  scavenging_id: state.scavenging_id,\n  project_id: state.project_id,\n  detected_stack: state.detected_stack.map(tech => ({\n    id: tech.id,\n    name: tech.name,\n    type: tech.type || 'technology',\n    category: tech.category || 'development',\n    description: tech.description || '',\n    source: tech.document_name || tech.source || 'uploaded document',\n    confidence: tech.confidence || 0.8,\n    alternatives: (tech.alternatives || []).map(alt => ({\n      name: alt.name,\n      description: alt.description || '',\n      pros: alt.pros || [],\n      cons: alt.cons || []\n    }))\n  })),\n  webhook_url: webhookUrl\n};\n\n// Chat message to send to frontend\nconst chatMessage = {\n  role: 'assistant',\n  content: `I've analyzed your uploaded documents and detected ${state.detected_stack.length} technology standards. Please review and approve them using the Tech Stack Configurator below.`,\n  message_type: 'governance_request',\n  payload: governancePayload\n};\n\nreturn {\n  json: {\n    ...state,\n    governance_payload: governancePayload,\n    chat_message: chatMessage,\n    webhook_suffix: `governance-batch-${state.scavenging_id}`\n  }\n};"
+      },
+      "id": "build-governance-payload",
+      "name": "Build Governance Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3580, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.DASHBOARD_WEBHOOK_URL || 'http://dashboard:3000/api/chat/message' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
             {
-              "id": "needs-approval",
-              "leftValue": "={{ $json.needs_approval }}",
-              "rightValue": true,
-              "operator": {
-                "type": "boolean",
-                "operation": "equals"
-              }
+              "name": "Content-Type",
+              "value": "application/json"
             }
-          ],
-          "combinator": "and"
-        }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ project_id: $json.project_id, session_id: $json.session_id, message: $json.chat_message }) }}"
       },
-      "id": "needs-approval-check",
-      "name": "Needs User Approval?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
-      "position": [3880, 0]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Prepare webhook confirmation request for user\n\nconst data = $input.first().json;\nconst std = data.standard;\n\n// Generate unique webhook suffix for this approval\nconst webhookSuffix = `tech_approval_${data.scavenging_id}_${data.standard_index}`;\n\nconst confirmationMessage = `I found a new technology standard:\n\n**${std.name}** (${std.type})\n- Category: ${std.category || 'general'}\n- Source: ${std.document_name}\n- Confidence: ${(std.confidence * 100).toFixed(0)}%\n- Description: ${std.description}\n\nIs this a **Global Standard** (applies across all projects) or **Local Standard** (this project only)?`;\n\nreturn {\n  json: {\n    ...data,\n    webhook_suffix: webhookSuffix,\n    confirmation_message: confirmationMessage,\n    awaiting_response: true\n  }\n};"
-      },
-      "id": "prepare-approval-request",
-      "name": "Prepare Approval Request",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [4120, -100]
+      "id": "send-governance-message",
+      "name": "Send Governance Message to Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3800, -100]
     },
     {
       "parameters": {
         "resume": "webhook",
         "options": {
-          "webhookSuffix": "={{ $json.webhook_suffix }}"
+          "webhookSuffix": "={{ $('Build Governance Payload').item.json.webhook_suffix }}"
         }
       },
-      "id": "wait-for-approval",
-      "name": "Wait for User Approval",
+      "id": "wait-for-batch-approval",
+      "name": "Wait for Batch Governance Response",
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [4340, -100],
-      "webhookId": "tech-governance-approval"
+      "position": [4020, -100],
+      "webhookId": "governance-batch-approval"
     },
     {
       "parameters": {
-        "jsCode": "// Process user's approval response\n\nconst prevData = $('Prepare Approval Request').item.json;\nconst webhookData = $input.first().json;\n\n// Parse user response - expecting { \"scope\": \"global|local|skip\" }\nconst userDecision = webhookData.body?.scope || webhookData.scope || 'skip';\n\nlet approved = false;\nlet scope = null;\n\nif (userDecision === 'global') {\n  approved = true;\n  scope = 'global';\n} else if (userDecision === 'local') {\n  approved = true;\n  scope = 'local';\n}\n\nreturn {\n  json: {\n    ...prevData,\n    user_decision: userDecision,\n    approved,\n    scope,\n    response_timestamp: new Date().toISOString()\n  }\n};"
+        "jsCode": "// Process batch governance response from frontend GovernanceWidget\n\nconst prevState = $('Build Governance Payload').item.json;\nconst webhookData = $input.first().json;\n\n// Parse the governance response\n// Expected format: { scavenging_id, project_id, decisions: [{ tech_id, action, scope, selected_alternative }] }\nconst response = webhookData.body || webhookData;\n\nconst decisions = response.decisions || [];\n\n// Match decisions back to detected stack\nconst processedStandards = prevState.detected_stack.map(tech => {\n  const decision = decisions.find(d => d.tech_id === tech.id) || { action: 'skip' };\n  \n  return {\n    ...tech,\n    user_decision: decision.action,\n    scope: decision.scope || null,\n    selected_alternative: decision.selected_alternative || null,\n    approved: decision.action === 'approve',\n    response_timestamp: new Date().toISOString()\n  };\n});\n\n// Separate approved and skipped\nconst approvedStandards = processedStandards.filter(s => s.approved);\nconst skippedStandards = processedStandards.filter(s => !s.approved);\n\nreturn {\n  json: {\n    project_id: prevState.project_id,\n    session_id: prevState.session_id,\n    scavenging_id: prevState.scavenging_id,\n    processed_standards: processedStandards,\n    approved_standards: approvedStandards,\n    skipped_standards: skippedStandards,\n    total_processed: processedStandards.length,\n    total_approved: approvedStandards.length,\n    total_skipped: skippedStandards.length\n  }\n};"
       },
-      "id": "process-approval",
-      "name": "Process Approval Response",
+      "id": "process-batch-response",
+      "name": "Process Batch Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [4560, -100]
+      "position": [4240, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split approved standards for storage\n\nconst state = $input.first().json;\nconst approved = state.approved_standards || [];\n\nif (approved.length === 0) {\n  // No standards to store - return final summary\n  return {\n    json: {\n      ...state,\n      storage_skipped: true\n    }\n  };\n}\n\n// Return each approved standard for storage\nreturn approved.map(std => ({\n  json: {\n    ...state,\n    current_standard: std\n  }\n}));"
+      },
+      "id": "split-for-storage",
+      "name": "Split Approved for Storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4460, -100]
     },
     {
       "parameters": {
@@ -375,23 +333,23 @@
           },
           "conditions": [
             {
-              "id": "approved",
-              "leftValue": "={{ $json.approved }}",
+              "id": "has-approved",
+              "leftValue": "={{ $json.storage_skipped }}",
               "rightValue": true,
               "operator": {
                 "type": "boolean",
-                "operation": "equals"
+                "operation": "notEquals"
               }
             }
           ],
           "combinator": "and"
         }
       },
-      "id": "check-approved",
-      "name": "Was Approved?",
+      "id": "has-approved-check",
+      "name": "Has Approved Standards?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [4780, -100]
+      "position": [4680, -100]
     },
     {
       "parameters": {
@@ -404,11 +362,11 @@
           "mappingMode": "defineBelow",
           "value": {
             "operation": "add_episode",
-            "name": "={{ 'Tech Standard: ' + $json.standard.name }}",
-            "content": "={{ JSON.stringify($json.standard) }}",
+            "name": "={{ 'Tech Standard: ' + $json.current_standard.name }}",
+            "content": "={{ JSON.stringify($json.current_standard) }}",
             "source": "document",
-            "source_description": "={{ 'Extracted from: ' + $json.standard.document_name }}",
-            "group_id": "={{ $json.scope === 'global' ? 'global_standards' : $json.project_id }}"
+            "source_description": "={{ 'Extracted from: ' + $json.current_standard.document_name }}",
+            "group_id": "={{ $json.current_standard.scope === 'global' ? 'global_standards' : $json.project_id }}"
           }
         }
       },
@@ -416,7 +374,7 @@
       "name": "Store in Graphiti",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [5020, -200]
+      "position": [4920, -200]
     },
     {
       "parameters": {
@@ -429,11 +387,11 @@
           "mappingMode": "defineBelow",
           "value": {
             "operation": "upsert",
-            "content": "={{ $json.standard.name + ': ' + $json.standard.description }}",
-            "scope": "={{ $json.scope }}",
+            "content": "={{ $json.current_standard.name + ': ' + $json.current_standard.description }}",
+            "scope": "={{ $json.current_standard.scope }}",
             "type": "standard",
-            "source": "={{ $json.standard.document_name }}",
-            "metadata": "={{ JSON.stringify({ category: $json.standard.category, confidence: $json.standard.confidence, type: $json.standard.type }) }}"
+            "source": "={{ $json.current_standard.document_name }}",
+            "metadata": "={{ JSON.stringify({ category: $json.current_standard.category, confidence: $json.current_standard.confidence, type: $json.current_standard.type, selected_alternative: $json.current_standard.selected_alternative }) }}"
           }
         }
       },
@@ -441,7 +399,7 @@
       "name": "Store in Qdrant",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [5020, 0]
+      "position": [4920, 0]
     },
     {
       "parameters": {
@@ -457,9 +415,9 @@
             "project_id": "={{ $json.project_id }}",
             "session_id": "={{ $json.session_id }}",
             "phase": "0",
-            "entry_type": "tech_standard_discovery",
-            "content": "={{ $json.standard.name }}",
-            "metadata": "={{ JSON.stringify({ name: $json.standard.name, type: $json.standard.type, source: $json.standard.document_name, confidence: $json.standard.confidence, user_decision: 'Approved as ' + $json.scope + ' Standard', stored_in: 'Graphiti (' + ($json.scope === 'global' ? 'global_standards' : $json.project_id) + '), Qdrant (scope: ' + $json.scope + ')' }) }}"
+            "entry_type": "tech_standard_approval",
+            "content": "={{ $json.current_standard.name }}",
+            "metadata": "={{ JSON.stringify({ name: $json.current_standard.name, type: $json.current_standard.type, source: $json.current_standard.document_name, confidence: $json.current_standard.confidence, scope: $json.current_standard.scope, selected_alternative: $json.current_standard.selected_alternative, stored_in: 'Graphiti (' + ($json.current_standard.scope === 'global' ? 'global_standards' : $json.project_id) + '), Qdrant (scope: ' + $json.current_standard.scope + ')' }) }}"
           }
         }
       },
@@ -467,27 +425,7 @@
       "name": "Log Approval Decision",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
-      "position": [5260, -100]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Mark standard as skipped (not approved)\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    ...data,\n    stored: false,\n    skip_reason: 'User declined to approve'\n  }\n};"
-      },
-      "id": "skip-standard",
-      "name": "Skip Standard",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [5020, 200]
-    },
-    {
-      "parameters": {
-        "jsCode": "// Handle already existing standard\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    ...data,\n    stored: false,\n    skip_reason: 'Already exists in knowledge graph',\n    existing_scope: data.existing_scope\n  }\n};"
-      },
-      "id": "already-exists",
-      "name": "Already Exists Handler",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [4120, 100]
+      "position": [5140, -100]
     },
     {
       "parameters": {
@@ -497,31 +435,31 @@
         },
         "options": {}
       },
-      "id": "merge-governance-results",
-      "name": "Merge Governance Results",
+      "id": "merge-storage-results",
+      "name": "Merge Storage Results",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
-      "position": [5500, 0]
+      "position": [5380, -100]
     },
     {
       "parameters": {
-        "jsCode": "// Aggregate final scavenging results\n\nconst allResults = $input.all();\n\n// Get first item for common data\nconst firstItem = allResults[0].json;\n\n// Count results\nlet approvedGlobal = 0;\nlet approvedLocal = 0;\nlet skipped = 0;\nlet alreadyExisted = 0;\n\nconst processedStandards = allResults.map(item => {\n  const data = item.json;\n  \n  if (data.stored === false) {\n    if (data.already_exists) {\n      alreadyExisted++;\n    } else {\n      skipped++;\n    }\n  } else if (data.scope === 'global') {\n    approvedGlobal++;\n  } else if (data.scope === 'local') {\n    approvedLocal++;\n  }\n  \n  return {\n    name: data.standard?.name,\n    type: data.standard?.type,\n    scope: data.scope || 'skipped',\n    stored: data.stored !== false\n  };\n});\n\nreturn {\n  json: {\n    project_id: firstItem.project_id,\n    session_id: firstItem.session_id,\n    scavenging_id: firstItem.scavenging_id,\n    phase: 0,\n    status: 'completed',\n    summary: {\n      total_standards_found: allResults.length,\n      approved_global: approvedGlobal,\n      approved_local: approvedLocal,\n      skipped: skipped,\n      already_existed: alreadyExisted\n    },\n    processed_standards: processedStandards,\n    completed_at: new Date().toISOString()\n  }\n};"
+        "jsCode": "// Final aggregation of scavenging results\n\nconst allResults = $input.all();\nconst firstItem = allResults[0]?.json || {};\n\n// Count by scope\nlet approvedGlobal = 0;\nlet approvedLocal = 0;\n\nconst storedStandards = allResults.map(item => {\n  const std = item.json.current_standard;\n  if (std) {\n    if (std.scope === 'global') approvedGlobal++;\n    else if (std.scope === 'local') approvedLocal++;\n  }\n  return std;\n}).filter(Boolean);\n\nreturn {\n  json: {\n    project_id: firstItem.project_id,\n    session_id: firstItem.session_id,\n    scavenging_id: firstItem.scavenging_id,\n    phase: 0,\n    status: 'completed',\n    summary: {\n      total_standards_found: firstItem.total_processed || storedStandards.length,\n      approved_global: approvedGlobal,\n      approved_local: approvedLocal,\n      skipped: (firstItem.total_skipped || 0)\n    },\n    processed_standards: storedStandards,\n    completed_at: new Date().toISOString()\n  }\n};"
       },
       "id": "final-aggregation",
       "name": "Final Aggregation",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [5720, 0]
+      "position": [5600, 0]
     },
     {
       "parameters": {
-        "jsCode": "// Final Output - Return scavenging results to caller workflow\n// Ensures proper data structure for parent workflow consumption\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id,\n    session_id: data.session_id,\n    scavenging_id: data.scavenging_id,\n    phase: data.phase || 0,\n    status: data.status || 'completed',\n    summary: data.summary || {},\n    processed_standards: data.processed_standards || [],\n    completed_at: data.completed_at || new Date().toISOString()\n  }\n};"
+        "jsCode": "// Subworkflow Output - Return results to caller\n\nconst data = $input.first().json;\n\nreturn {\n  json: {\n    project_id: data.project_id,\n    session_id: data.session_id,\n    scavenging_id: data.scavenging_id,\n    phase: data.phase || 0,\n    status: data.status || 'completed',\n    summary: data.summary || {},\n    processed_standards: data.processed_standards || [],\n    completed_at: data.completed_at || new Date().toISOString()\n  }\n};"
       },
       "id": "output-node",
       "name": "Subworkflow Output",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [5940, 0]
+      "position": [5820, 0]
     }
   ],
   "connections": {
@@ -537,46 +475,6 @@
       ]
     },
     "State Initializer": {
-      "main": [
-        [
-          {
-            "node": "Has Drive Folder?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Drive Folder?": {
-      "main": [
-        [
-          {
-            "node": "List Drive Files",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "No Drive Folder Handler",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "List Drive Files": {
-      "main": [
-        [
-          {
-            "node": "Prepare Documents",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "No Drive Folder Handler": {
       "main": [
         [
           {
@@ -620,32 +518,14 @@
       "main": [
         [
           {
-            "node": "Needs Download?",
+            "node": "Download from S3",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Needs Download?": {
-      "main": [
-        [
-          {
-            "node": "Download Document",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Merge Content",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Download Document": {
+    "Download from S3": {
       "main": [
         [
           {
@@ -657,17 +537,6 @@
       ]
     },
     "Extract Text Content": {
-      "main": [
-        [
-          {
-            "node": "Merge Content",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge Content": {
       "main": [
         [
           {
@@ -715,98 +584,160 @@
       "main": [
         [
           {
-            "node": "Split for Governance",
+            "node": "Has Standards?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Split for Governance": {
+    "Has Standards?": {
       "main": [
         [
           {
-            "node": "Check Existing Standard",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check Existing Standard": {
-      "main": [
-        [
-          {
-            "node": "Check Governance Status",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check Governance Status": {
-      "main": [
-        [
-          {
-            "node": "Needs User Approval?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Needs User Approval?": {
-      "main": [
-        [
-          {
-            "node": "Prepare Approval Request",
+            "node": "Split for Perplexity",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Already Exists Handler",
+            "node": "No Standards Handler",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Approval Request": {
+    "No Standards Handler": {
       "main": [
         [
           {
-            "node": "Wait for User Approval",
+            "node": "Subworkflow Output",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Wait for User Approval": {
+    "Split for Perplexity": {
       "main": [
         [
           {
-            "node": "Process Approval Response",
+            "node": "Perplexity Batch (3 parallel)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Approval Response": {
+    "Perplexity Batch (3 parallel)": {
       "main": [
         [
           {
-            "node": "Was Approved?",
+            "node": "Fetch Alternatives (Perplexity)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Aggregate Enriched Standards",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Was Approved?": {
+    "Fetch Alternatives (Perplexity)": {
+      "main": [
+        [
+          {
+            "node": "Parse Alternatives",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Alternatives": {
+      "main": [
+        [
+          {
+            "node": "Perplexity Batch (3 parallel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Enriched Standards": {
+      "main": [
+        [
+          {
+            "node": "Build Governance Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Governance Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Governance Message to Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Governance Message to Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Wait for Batch Governance Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Batch Governance Response": {
+      "main": [
+        [
+          {
+            "node": "Process Batch Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Batch Response": {
+      "main": [
+        [
+          {
+            "node": "Split Approved for Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Approved for Storage": {
+      "main": [
+        [
+          {
+            "node": "Has Approved Standards?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Approved Standards?": {
       "main": [
         [
           {
@@ -822,7 +753,7 @@
         ],
         [
           {
-            "node": "Skip Standard",
+            "node": "Final Aggregation",
             "type": "main",
             "index": 0
           }
@@ -855,36 +786,14 @@
       "main": [
         [
           {
-            "node": "Merge Governance Results",
+            "node": "Merge Storage Results",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Skip Standard": {
-      "main": [
-        [
-          {
-            "node": "Merge Governance Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Already Exists Handler": {
-      "main": [
-        [
-          {
-            "node": "Merge Governance Results",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge Governance Results": {
+    "Merge Storage Results": {
       "main": [
         [
           {
@@ -911,7 +820,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "1",
+  "versionId": "2",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "ai-product-factory"

@@ -3,10 +3,12 @@ import {
   ListObjectsV2Command,
   GetObjectCommand,
   PutObjectCommand,
+  DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Artifact } from "@/types/artifact";
 import { getArtifactType } from "@/types/artifact";
+import type { InputFile } from "@/lib/schemas";
 
 let s3Client: S3Client | null = null;
 
@@ -151,4 +153,127 @@ export function getPublicUrl(key: string): string {
   }
 
   return `${publicEndpoint}/${bucket}/${key}`;
+}
+
+// ============================================
+// Input File Operations (for file uploads)
+// ============================================
+
+/**
+ * Content type mapping for common file extensions
+ */
+const CONTENT_TYPE_MAP: Record<string, string> = {
+  ".pdf": "application/pdf",
+  ".md": "text/markdown",
+  ".txt": "text/plain",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".doc": "application/msword",
+  ".json": "application/json",
+};
+
+/**
+ * Get content type from filename
+ */
+export function getContentType(filename: string): string {
+  const ext = filename.toLowerCase().match(/\.[^.]+$/)?.[0] || "";
+  return CONTENT_TYPE_MAP[ext] || "application/octet-stream";
+}
+
+/**
+ * Generate a presigned PUT URL for direct browser uploads
+ * Returns the upload URL and the S3 key where the file will be stored
+ */
+export async function generateUploadUrl(
+  projectId: string,
+  filename: string,
+  contentType: string
+): Promise<{ uploadUrl: string; key: string; expiresIn: number }> {
+  const client = getS3Client();
+  const bucket = getBucket();
+
+  // Sanitize filename to prevent path traversal
+  const sanitizedFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const key = `projects/${projectId}/input/${sanitizedFilename}`;
+  const expiresIn = 3600; // 1 hour
+
+  const command = new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  const uploadUrl = await getSignedUrl(client, command, { expiresIn });
+
+  return { uploadUrl, key, expiresIn };
+}
+
+/**
+ * List all input files for a project
+ */
+export async function listInputFiles(projectId: string): Promise<InputFile[]> {
+  const client = getS3Client();
+  const bucket = getBucket();
+  const prefix = `projects/${projectId}/input/`;
+
+  const command = new ListObjectsV2Command({
+    Bucket: bucket,
+    Prefix: prefix,
+  });
+
+  const response = await client.send(command);
+  const contents = response.Contents || [];
+
+  const files: InputFile[] = contents
+    .filter((obj) => obj.Key && obj.Size && obj.Size > 0)
+    .map((obj) => {
+      const key = obj.Key!;
+      const name = key.split("/").pop() || key;
+
+      return {
+        key,
+        name,
+        size: obj.Size || 0,
+        contentType: getContentType(name),
+        uploadedAt: obj.LastModified?.toISOString() || new Date().toISOString(),
+      };
+    });
+
+  return files;
+}
+
+/**
+ * Delete an input file from S3
+ */
+export async function deleteInputFile(key: string): Promise<void> {
+  const client = getS3Client();
+  const bucket = getBucket();
+
+  const command = new DeleteObjectCommand({
+    Bucket: bucket,
+    Key: key,
+  });
+
+  await client.send(command);
+}
+
+/**
+ * Get presigned download URL for an input file
+ */
+export async function getInputFileUrl(key: string): Promise<string> {
+  const client = getS3Client();
+  const bucket = getBucket();
+
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+  });
+
+  return getSignedUrl(client, command, { expiresIn: 3600 });
+}
+
+/**
+ * Download input file content as string (for text-based files)
+ */
+export async function getInputFileContent(key: string): Promise<string> {
+  return getArtifactContent(key);
 }

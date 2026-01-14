@@ -1,7 +1,9 @@
-import { createFileRoute, createServerFn } from "@tanstack/react-router";
+import { createFileRoute, createServerFn, Link } from "@tanstack/react-router";
 import { ProjectList } from "@/components/projects/ProjectList";
 import { getProjects } from "@/lib/db";
 import type { ProjectSummary } from "@/types/project";
+import { Button } from "@/components/ui/button";
+import { Plus } from "lucide-react";
 
 const fetchProjects = createServerFn({ method: "GET" }).handler(async () => {
   const projects = await getProjects();
@@ -28,6 +30,12 @@ function ProjectsPage() {
             Manage your Product Factory projects
           </p>
         </div>
+        <Button asChild>
+          <Link to="/projects/new">
+            <Plus className="mr-2 h-4 w-4" />
+            New Project
+          </Link>
+        </Button>
       </div>
       <ProjectList projects={projects} />
     </div>

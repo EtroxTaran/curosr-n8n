@@ -433,6 +433,60 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [3000, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "project_id": "={{ $json.project_id }}",
+            "artifact_type": "vision_final",
+            "filename": "ProductVision_FINAL.md",
+            "content": "={{ $json.final_draft || '' }}",
+            "content_type": "text/markdown"
+          }
+        }
+      },
+      "id": "upload-final-vision-s3",
+      "name": "Upload Final Vision to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2880, 200],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "upload_artifact",
+            "project_id": "={{ $json.project_id }}",
+            "artifact_type": "iteration",
+            "phase": "vision",
+            "iteration": "={{ $json.total_iterations }}",
+            "filename": "iteration_summary.json",
+            "content": "={{ JSON.stringify($json.telemetry || {}) }}",
+            "content_type": "application/json"
+          }
+        }
+      },
+      "id": "upload-vision-telemetry-s3",
+      "name": "Upload Vision Telemetry to S3",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2880, 350],
+      "continueOnFail": true
     }
   ],
   "connections": {
@@ -590,7 +644,12 @@
       "main": [
         [
           {
-            "node": "Subworkflow Output",
+            "node": "Upload Final Vision to S3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upload Vision Telemetry to S3",
             "type": "main",
             "index": 0
           }
@@ -733,6 +792,33 @@
       ]
     },
     "Human Accepted Output": {
+      "main": [
+        [
+          {
+            "node": "Upload Final Vision to S3",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Upload Vision Telemetry to S3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Final Vision to S3": {
+      "main": [
+        [
+          {
+            "node": "Subworkflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Vision Telemetry to S3": {
       "main": [
         [
           {

@@ -1,14 +1,25 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { GovernanceWidget } from "@/components/governance/GovernanceWidget";
 import type { ChatMessage } from "@/types/chat";
+import type { GovernancePayload, GovernanceResponse } from "@/lib/schemas";
+import { GovernancePayloadSchema } from "@/lib/schemas";
 import { cn, formatDateTime } from "@/lib/utils";
 
+interface ExtendedChatMessage extends ChatMessage {
+  message_type?: "text" | "governance_request" | "phase_update";
+  payload?: unknown;
+}
+
 interface ChatWindowProps {
-  messages: ChatMessage[];
+  messages: ExtendedChatMessage[];
   onSendMessage: (message: string) => Promise<void>;
+  onGovernanceSubmit?: (response: GovernanceResponse) => Promise<void>;
   isLoading?: boolean;
   isSending?: boolean;
   projectName?: string;
@@ -17,6 +28,7 @@ interface ChatWindowProps {
 export function ChatWindow({
   messages,
   onSendMessage,
+  onGovernanceSubmit,
   isLoading,
   isSending,
   projectName,
@@ -93,7 +105,11 @@ export function ChatWindow({
             </div>
           ) : (
             messages.map((message) => (
-              <ChatBubble key={message.id} message={message} />
+              <ChatBubble
+                key={message.id}
+                message={message}
+                onGovernanceSubmit={onGovernanceSubmit}
+              />
             ))
           )}
           {isSending && (
@@ -148,12 +164,56 @@ export function ChatWindow({
 }
 
 interface ChatBubbleProps {
-  message: ChatMessage;
+  message: ExtendedChatMessage;
+  onGovernanceSubmit?: (response: GovernanceResponse) => Promise<void>;
 }
 
-function ChatBubble({ message }: ChatBubbleProps) {
+function ChatBubble({ message, onGovernanceSubmit }: ChatBubbleProps) {
   const isUser = message.role === "user";
 
+  // Check if this is a governance request message
+  if (message.message_type === "governance_request" && message.payload) {
+    const parseResult = GovernancePayloadSchema.safeParse(message.payload);
+    if (parseResult.success) {
+      const handleSubmit = async (response: GovernanceResponse) => {
+        if (onGovernanceSubmit) {
+          await onGovernanceSubmit(response);
+        } else {
+          // Fallback: POST directly to API
+          const res = await fetch("/api/governance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(response),
+          });
+          if (!res.ok) {
+            throw new Error("Failed to submit governance decisions");
+          }
+        }
+      };
+
+      return (
+        <div className="flex justify-start">
+          <GovernanceWidget
+            payload={parseResult.data}
+            onSubmit={handleSubmit}
+          />
+        </div>
+      );
+    }
+  }
+
+  // Check if this is a phase update message
+  if (message.message_type === "phase_update") {
+    return (
+      <div className="flex justify-center">
+        <div className="bg-blue-50 dark:bg-blue-950/30 text-blue-800 dark:text-blue-300 rounded-full px-4 py-2 text-sm">
+          {message.content}
+        </div>
+      </div>
+    );
+  }
+
+  // Default text message rendering
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
@@ -162,7 +222,15 @@ function ChatBubble({ message }: ChatBubbleProps) {
           isUser ? "bg-primary text-primary-foreground" : "bg-muted"
         )}
       >
-        <div className="whitespace-pre-wrap break-words">{message.content}</div>
+        {isUser ? (
+          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+        ) : (
+          <div className="prose prose-sm dark:prose-invert max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        )}
         <div
           className={cn(
             "text-xs mt-2",

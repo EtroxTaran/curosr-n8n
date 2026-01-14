@@ -1,9 +1,13 @@
+export type ChatMessageType = "text" | "governance_request" | "phase_update";
+
 export interface ChatMessage {
   id: string;
   project_id: string;
   session_id: string | null;
   role: "user" | "assistant" | "system";
   content: string;
+  message_type?: ChatMessageType;
+  payload?: unknown;
   n8n_execution_id: string | null;
   response_time_ms: number | null;
   created_at: string;

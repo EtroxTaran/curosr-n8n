@@ -13,7 +13,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// S3 Storage Operations - Input Validator\n// Validates incoming operation requests\n\nconst input = $input.first().json;\n\nconst operation = input.operation;\nconst validOperations = ['upload_artifact', 'download_artifact', 'list_artifacts', 'sync_to_postgres', 'create_bucket'];\n\nif (!operation || !validOperations.includes(operation)) {\n  throw new Error(`Invalid operation: ${operation}. Valid operations: ${validOperations.join(', ')}`);\n}\n\nconst projectId = input.project_id;\nif (!projectId && operation !== 'create_bucket') {\n  throw new Error('project_id is required for this operation');\n}\n\nreturn {\n  json: {\n    operation,\n    project_id: projectId,\n    artifact_type: input.artifact_type || 'unknown',\n    content: input.content || '',\n    filename: input.filename || '',\n    content_type: input.content_type || 'text/markdown',\n    s3_key: input.s3_key || '',\n    project_state: input.project_state || null,\n    bucket: $env.S3_BUCKET || 'product-factory-artifacts'\n  }\n};"
+        "jsCode": "// S3 Storage Operations - Input Validator\n// Validates incoming operation requests\n\nconst input = $input.first().json;\n\nconst operation = input.operation;\nconst validOperations = ['upload_artifact', 'download_artifact', 'list_artifacts', 'list_input_files', 'sync_to_postgres', 'create_bucket', 'insert_decision_log_entry'];\n\nif (!operation || !validOperations.includes(operation)) {\n  throw new Error(`Invalid operation: ${operation}. Valid operations: ${validOperations.join(', ')}`);\n}\n\nconst projectId = input.project_id;\nif (!projectId && operation !== 'create_bucket') {\n  throw new Error('project_id is required for this operation');\n}\n\n// Build base output\nconst output = {\n  operation,\n  project_id: projectId,\n  artifact_type: input.artifact_type || 'unknown',\n  content: input.content || '',\n  filename: input.filename || '',\n  content_type: input.content_type || 'text/markdown',\n  s3_key: input.s3_key || '',\n  project_state: input.project_state || null,\n  bucket: $env.S3_BUCKET || 'product-factory-artifacts'\n};\n\n// Add decision log entry fields if applicable\nif (operation === 'insert_decision_log_entry') {\n  output.session_id = input.session_id || null;\n  output.entry_type = input.entry_type || 'log_info';\n  output.phase = input.phase !== undefined ? parseInt(input.phase) : null;\n  output.iteration = input.iteration !== undefined ? parseInt(input.iteration) : null;\n  output.metadata = typeof input.metadata === 'string' ? input.metadata : JSON.stringify(input.metadata || {});\n  output.agent_name = input.agent_name || null;\n  output.score = input.score !== undefined ? parseFloat(input.score) : null;\n  output.issues_count = input.issues_count !== undefined ? parseInt(input.issues_count) : null;\n}\n\nreturn { json: output };"
       },
       "id": "input-validator",
       "name": "Validate Input",
@@ -62,6 +62,24 @@
               "id": "sync",
               "leftValue": "={{ $json.operation }}",
               "rightValue": "sync_to_postgres",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "decision_log",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "insert_decision_log_entry",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "list_input",
+              "leftValue": "={{ $json.operation }}",
+              "rightValue": "list_input_files",
               "operator": {
                 "type": "string",
                 "operation": "equals"
@@ -266,6 +284,74 @@
       "type": "n8n-nodes-base.merge",
       "typeVersion": 3,
       "position": [1440, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO decision_log_entries (\n  project_id, session_id, entry_type, phase, iteration,\n  content, metadata, agent_name, score, issues_count\n) VALUES (\n  $1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10\n)\nRETURNING id, created_at",
+        "options": {
+          "queryParams": "={{ [\n  $json.project_id,\n  $json.session_id,\n  $json.entry_type,\n  $json.phase,\n  $json.iteration,\n  $json.content,\n  $json.metadata,\n  $json.agent_name,\n  $json.score,\n  $json.issues_count\n] }}"
+        }
+      },
+      "id": "postgres-insert-decision-log",
+      "name": "PostgreSQL Insert Decision Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-cred",
+          "name": "PostgreSQL"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build decision log insert response\nconst input = $('Validate Input').first().json;\nconst insertResult = $input.first().json;\n\nconst success = insertResult && insertResult.id;\n\nreturn {\n  json: {\n    operation: 'insert_decision_log_entry',\n    success: !!success,\n    project_id: input.project_id,\n    entry_id: insertResult?.id || null,\n    entry_type: input.entry_type,\n    created_at: insertResult?.created_at || null,\n    message: success ? 'Decision log entry inserted' : 'Failed to insert decision log entry'\n  }\n};"
+      },
+      "id": "decision-log-response",
+      "name": "Decision Log Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.S3_ENDPOINT }}/{{ $json.bucket }}?prefix=projects/{{ $json.project_id }}/input/",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "s3-list-input",
+      "name": "S3 List Input Files",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 550],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "s3-auth",
+          "name": "S3 API Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse S3 list response for input files\nconst input = $('Validate Input').first().json;\nconst response = $input.first().json;\n\nlet files = [];\n\nif (response.statusCode >= 200 && response.statusCode < 300) {\n  const xml = response.data || '';\n  const keyMatches = [...xml.matchAll(/<Key>([^<]+)<\\/Key>/g)];\n  const sizeMatches = [...xml.matchAll(/<Size>([^<]+)<\\/Size>/g)];\n  const dateMatches = [...xml.matchAll(/<LastModified>([^<]+)<\\/LastModified>/g)];\n  \n  const keys = keyMatches.map(m => m[1]);\n  const sizes = sizeMatches.map(m => parseInt(m[1]));\n  const dates = dateMatches.map(m => m[1]);\n  \n  // Map content types by extension\n  const contentTypeMap = {\n    '.pdf': 'application/pdf',\n    '.md': 'text/markdown',\n    '.txt': 'text/plain',\n    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',\n    '.doc': 'application/msword'\n  };\n  \n  files = keys\n    .filter(key => key && !key.endsWith('/')) // Filter out folder entries\n    .map((key, i) => {\n      const name = key.split('/').pop() || key;\n      const ext = name.toLowerCase().match(/\\.[^.]+$/)?.[0] || '';\n      return {\n        key,\n        name,\n        size: sizes[i] || 0,\n        contentType: contentTypeMap[ext] || 'application/octet-stream',\n        uploadedAt: dates[i] || new Date().toISOString()\n      };\n    });\n}\n\nreturn {\n  json: {\n    operation: 'list_input_files',\n    success: response.statusCode >= 200 && response.statusCode < 300,\n    project_id: input.project_id,\n    files,\n    count: files.length\n  }\n};"
+      },
+      "id": "list-input-response",
+      "name": "Parse Input Files Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 550]
     }
   ],
   "connections": {
@@ -317,6 +403,20 @@
         [
           {
             "node": "Build PostgreSQL Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "PostgreSQL Insert Decision Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "S3 List Input Files",
             "type": "main",
             "index": 0
           }
@@ -434,6 +534,50 @@
       ]
     },
     "PostgreSQL Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PostgreSQL Insert Decision Log": {
+      "main": [
+        [
+          {
+            "node": "Decision Log Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Log Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "S3 List Input Files": {
+      "main": [
+        [
+          {
+            "node": "Parse Input Files Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Input Files Response": {
       "main": [
         [
           {

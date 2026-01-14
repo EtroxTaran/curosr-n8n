@@ -1,0 +1,901 @@
+{
+  "name": "AI Product Factory - API Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "start-project",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-start-project",
+      "name": "Webhook: Start Project",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "start-project"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "resume-project",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-resume-project",
+      "name": "Webhook: Resume Project",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "resume-project"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "governance-batch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-governance-batch",
+      "name": "Webhook: Governance Batch Response",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 600],
+      "webhookId": "governance-batch"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "project-status",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-status",
+      "name": "Webhook: Project Status",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 900],
+      "webhookId": "project-status"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate Start Project Input (S3-only, no Google Drive)\n\nconst body = $input.first().json.body || {};\n\n// Required fields\nconst projectName = body.projectName || body.project_name;\nconst projectId = body.projectId || body.project_id;\nconst inputFiles = body.inputFiles || body.input_files;\n\nif (!projectName) {\n  return {\n    json: {\n      valid: false,\n      error: 'Missing required field: projectName',\n      status: 400\n    }\n  };\n}\n\nif (!inputFiles || !Array.isArray(inputFiles) || inputFiles.length === 0) {\n  return {\n    json: {\n      valid: false,\n      error: 'Missing required field: inputFiles (array of uploaded S3 files)',\n      status: 400\n    }\n  };\n}\n\n// Generate project ID from name if not provided\nconst finalProjectId = projectId || projectName\n  .toLowerCase()\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-|-$/g, '') + \n  '-' + Date.now().toString(36);\n\n// Generate session ID\nconst sessionId = body.sessionId || body.session_id || 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\nreturn {\n  json: {\n    valid: true,\n    project_id: finalProjectId,\n    project_name: projectName,\n    session_id: sessionId,\n    input_files: inputFiles,\n    description: body.description || '',\n    config: {\n      max_iterations: body.max_iterations || 5,\n      score_threshold: body.score_threshold || 90\n    }\n  }\n};"
+      },
+      "id": "validate-start-input",
+      "name": "Validate Start Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-start-valid",
+      "name": "Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - S3 Storage Operations"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "operation": "sync_to_postgres",
+            "project_id": "={{ $json.project_id }}",
+            "project_state": "={{ JSON.stringify({ project_id: $json.project_id, project_name: $json.project_name, session_id: $json.session_id, current_phase: 0, phase_status: 'pending', input_files: $json.input_files, config: $json.config }) }}"
+          }
+        }
+      },
+      "id": "create-project-record",
+      "name": "Create Project in Database",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [720, -100],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - Main Orchestrator"
+        },
+        "mode": "runWorkflowAsync",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatInput": "={{ 'Start new project: ' + $json.project_name + '\\n' + ($json.description ? 'Description: ' + $json.description : '') }}",
+            "projectId": "={{ $json.project_id }}",
+            "sessionId": "={{ $json.session_id }}",
+            "inputFiles": "={{ JSON.stringify($json.input_files) }}"
+          }
+        }
+      },
+      "id": "start-main-workflow",
+      "name": "Start Main Orchestrator (Async)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [960, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build success response for start-project\n\nconst input = $('Validate Start Input').item.json;\n\nreturn {\n  json: {\n    status: 'started',\n    project_id: input.project_id,\n    project_name: input.project_name,\n    session_id: input.session_id,\n    input_files_count: input.input_files.length,\n    message: `Project '${input.project_name}' has been started with ${input.input_files.length} input document(s). Use project_id to check status or resume.`,\n    links: {\n      status: `/webhook/project-status?project_id=${input.project_id}`,\n      resume: '/webhook/resume-project'\n    }\n  }\n};"
+      },
+      "id": "build-start-response",
+      "name": "Build Start Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "respond-start-success",
+      "name": "Respond: Project Started",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1440, -100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, status: $json.status || 400 } }}",
+        "options": {
+          "responseCode": "={{ $json.status || 400 }}"
+        }
+      },
+      "id": "respond-start-error",
+      "name": "Respond: Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate Resume Project Input\n\nconst body = $input.first().json.body || {};\nconst query = $input.first().json.query || {};\n\n// Accept project_id from body or query params\nconst projectId = body.projectId || body.project_id || query.project_id;\n\nif (!projectId) {\n  return {\n    json: {\n      valid: false,\n      error: 'Missing required field: projectId',\n      status: 400\n    }\n  };\n}\n\n// Generate new session ID for resume\nconst sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);\n\nreturn {\n  json: {\n    valid: true,\n    project_id: projectId,\n    session_id: sessionId,\n    force_phase: body.force_phase || body.forcePhase || null\n  }\n};"
+      },
+      "id": "validate-resume-input",
+      "name": "Validate Resume Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-resume-valid",
+      "name": "Resume Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_id, project_name, current_phase, phase_status, session_id, config, input_files\nFROM project_state\nWHERE project_id = $1",
+        "options": {
+          "queryReplacement": "={{ $json.project_id }}"
+        }
+      },
+      "id": "lookup-project",
+      "name": "Lookup Project in Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres",
+          "name": "PostgreSQL"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "project-found",
+              "leftValue": "={{ $json.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-project-found",
+      "name": "Project Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [960, 200]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI Product Factory - Main Orchestrator"
+        },
+        "mode": "runWorkflowAsync",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "chatInput": "Resume",
+            "projectId": "={{ $('Lookup Project in Database').item.json[0].project_id }}",
+            "sessionId": "={{ $('Validate Resume Input').item.json.session_id }}",
+            "inputFiles": "={{ JSON.stringify($('Lookup Project in Database').item.json[0].input_files || []) }}"
+          }
+        }
+      },
+      "id": "resume-main-workflow",
+      "name": "Resume Main Orchestrator (Async)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1200, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build success response for resume-project\n\nconst projectData = $('Lookup Project in Database').item.json[0];\nconst resumeInput = $('Validate Resume Input').item.json;\n\nconst phaseNames = {\n  0: 'Scavenging (Context Extraction)',\n  1: 'Vision Loop',\n  2: 'Architecture Loop',\n  3: 'Completed'\n};\n\nreturn {\n  json: {\n    status: 'resumed',\n    project_id: projectData.project_id,\n    project_name: projectData.project_name,\n    session_id: resumeInput.session_id,\n    current_phase: projectData.current_phase,\n    phase_name: phaseNames[projectData.current_phase] || 'Unknown',\n    phase_status: projectData.phase_status,\n    message: `Project '${projectData.project_name}' has been resumed from Phase ${projectData.current_phase}.`\n  }\n};"
+      },
+      "id": "build-resume-response",
+      "name": "Build Resume Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "respond-resume-success",
+      "name": "Respond: Project Resumed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'Project not found', project_id: $('Validate Resume Input').item.json.project_id, status: 404 } }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-project-not-found",
+      "name": "Respond: Project Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, status: $json.status || 400 } }}",
+        "options": {
+          "responseCode": "={{ $json.status || 400 }}"
+        }
+      },
+      "id": "respond-resume-error",
+      "name": "Respond: Resume Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate Batch Governance Response Input\n// Handles the new batch governance format from Tech Stack Configurator\n\nconst body = $input.first().json.body || {};\n\n// Required fields from GovernanceResponse schema\nconst scavengingId = body.scavenging_id || body.scavengingId;\nconst projectId = body.project_id || body.projectId;\nconst decisions = body.decisions;\n\nif (!scavengingId) {\n  return {\n    json: {\n      valid: false,\n      error: 'Missing required field: scavenging_id',\n      status: 400\n    }\n  };\n}\n\nif (!projectId) {\n  return {\n    json: {\n      valid: false,\n      error: 'Missing required field: project_id',\n      status: 400\n    }\n  };\n}\n\nif (!decisions || !Array.isArray(decisions)) {\n  return {\n    json: {\n      valid: false,\n      error: 'Missing or invalid field: decisions (must be array)',\n      status: 400\n    }\n  };\n}\n\n// Validate each decision\nconst validActions = ['approve', 'reject', 'skip'];\nconst validScopes = ['global', 'local'];\n\nfor (const decision of decisions) {\n  if (!decision.tech_id) {\n    return {\n      json: {\n        valid: false,\n        error: 'Each decision must have a tech_id',\n        status: 400\n      }\n    };\n  }\n  \n  if (!decision.action || !validActions.includes(decision.action)) {\n    return {\n      json: {\n        valid: false,\n        error: `Invalid action for ${decision.tech_id}. Must be: ${validActions.join(', ')}`,\n        status: 400\n      }\n    };\n  }\n  \n  if (decision.action === 'approve' && decision.scope && !validScopes.includes(decision.scope)) {\n    return {\n      json: {\n        valid: false,\n        error: `Invalid scope for ${decision.tech_id}. Must be: ${validScopes.join(', ')}`,\n        status: 400\n      }\n    };\n  }\n}\n\nreturn {\n  json: {\n    valid: true,\n    scavenging_id: scavengingId,\n    project_id: projectId,\n    decisions: decisions,\n    submitted_at: body.submitted_at || new Date().toISOString()\n  }\n};"
+      },
+      "id": "validate-governance-batch-input",
+      "name": "Validate Governance Batch Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 600]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-governance-batch-valid",
+      "name": "Governance Batch Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 600]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://c3po.etrox.de/webhook-waiting/governance_batch_' + $json.scavenging_id }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ scavenging_id: $json.scavenging_id, project_id: $json.project_id, decisions: $json.decisions, submitted_at: $json.submitted_at }) }}",
+        "options": {}
+      },
+      "id": "call-governance-batch-webhook",
+      "name": "Resume Waiting Governance Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build governance batch response\n\nconst input = $('Validate Governance Batch Input').item.json;\nconst httpResult = $input.first().json;\n\nconst success = !httpResult.error;\n\n// Calculate summary\nconst decisions = input.decisions || [];\nconst approvedGlobal = decisions.filter(d => d.action === 'approve' && d.scope === 'global').length;\nconst approvedLocal = decisions.filter(d => d.action === 'approve' && d.scope === 'local').length;\nconst skipped = decisions.filter(d => d.action === 'skip').length;\n\nreturn {\n  json: {\n    status: success ? 'acknowledged' : 'failed',\n    scavenging_id: input.scavenging_id,\n    project_id: input.project_id,\n    summary: {\n      total: decisions.length,\n      approved_global: approvedGlobal,\n      approved_local: approvedLocal,\n      skipped: skipped\n    },\n    message: success \n      ? `Batch governance response processed: ${approvedGlobal} global, ${approvedLocal} local, ${skipped} skipped.`\n      : 'Failed to deliver governance response. The workflow may have timed out or already processed.',\n    error: httpResult.error || null\n  }\n};"
+      },
+      "id": "build-governance-batch-response",
+      "name": "Build Governance Batch Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": "={{ $json.status === 'acknowledged' ? 200 : 502 }}"
+        }
+      },
+      "id": "respond-governance-batch",
+      "name": "Respond: Governance Batch Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, status: $json.status || 400 } }}",
+        "options": {
+          "responseCode": "={{ $json.status || 400 }}"
+        }
+      },
+      "id": "respond-governance-batch-error",
+      "name": "Respond: Governance Batch Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate Project Status Input\n\nconst query = $input.first().json.query || {};\n\nconst projectId = query.project_id || query.projectId;\n\nif (!projectId) {\n  return {\n    json: {\n      valid: false,\n      error: 'Missing required query parameter: project_id',\n      status: 400\n    }\n  };\n}\n\nreturn {\n  json: {\n    valid: true,\n    project_id: projectId\n  }\n};"
+      },
+      "id": "validate-status-input",
+      "name": "Validate Status Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 900]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-status-valid",
+      "name": "Status Input Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [480, 900]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  ps.project_id,\n  ps.project_name,\n  ps.current_phase,\n  ps.phase_status,\n  ps.last_iteration_score,\n  ps.total_iterations,\n  ps.input_files,\n  ps.created_at,\n  ps.updated_at,\n  ps.completed_at,\n  ps.artifact_vision_final,\n  ps.artifact_architecture_final,\n  (SELECT COUNT(*) FROM decision_log_entries WHERE project_id = ps.project_id) as decision_count\nFROM project_state ps\nWHERE ps.project_id = $1",
+        "options": {
+          "queryReplacement": "={{ $json.project_id }}"
+        }
+      },
+      "id": "get-project-status",
+      "name": "Get Project Status from Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [720, 800],
+      "credentials": {
+        "postgres": {
+          "id": "postgres",
+          "name": "PostgreSQL"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "status-found",
+              "leftValue": "={{ $json.length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-status-found",
+      "name": "Status Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [960, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build project status response\n\nconst data = $input.first().json[0];\n\nconst phaseNames = {\n  0: 'Scavenging (Context Extraction)',\n  1: 'Vision Loop',\n  2: 'Architecture Loop',\n  3: 'Completed'\n};\n\nconst statusEmoji = {\n  'pending': '⏳',\n  'in_progress': '🔄',\n  'completed': '✅',\n  'failed': '❌',\n  'paused': '⏸️'\n};\n\n// Parse input files if stored as JSON string\nlet inputFilesCount = 0;\nif (data.input_files) {\n  const files = typeof data.input_files === 'string' ? JSON.parse(data.input_files) : data.input_files;\n  inputFilesCount = Array.isArray(files) ? files.length : 0;\n}\n\nreturn {\n  json: {\n    project_id: data.project_id,\n    project_name: data.project_name,\n    current_phase: data.current_phase,\n    phase_name: phaseNames[data.current_phase] || 'Unknown',\n    phase_status: data.phase_status,\n    status_display: statusEmoji[data.phase_status] || '❓',\n    progress: {\n      last_score: data.last_iteration_score,\n      total_iterations: data.total_iterations,\n      decision_count: data.decision_count,\n      input_files_count: inputFilesCount\n    },\n    artifacts: {\n      vision_final: data.artifact_vision_final || null,\n      architecture_final: data.artifact_architecture_final || null\n    },\n    timestamps: {\n      created_at: data.created_at,\n      updated_at: data.updated_at,\n      completed_at: data.completed_at\n    }\n  }\n};"
+      },
+      "id": "build-status-response",
+      "name": "Build Status Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-status-success",
+      "name": "Respond: Project Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1440, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'Project not found', project_id: $('Validate Status Input').item.json.project_id, status: 404 } }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-status-not-found",
+      "name": "Respond: Status Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 900]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, status: $json.status || 400 } }}",
+        "options": {
+          "responseCode": "={{ $json.status || 400 }}"
+        }
+      },
+      "id": "respond-status-error",
+      "name": "Respond: Status Validation Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 1000]
+    }
+  ],
+  "connections": {
+    "Webhook: Start Project": {
+      "main": [
+        [
+          {
+            "node": "Validate Start Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Start Input": {
+      "main": [
+        [
+          {
+            "node": "Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Create Project in Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Project in Database": {
+      "main": [
+        [
+          {
+            "node": "Start Main Orchestrator (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Main Orchestrator (Async)": {
+      "main": [
+        [
+          {
+            "node": "Build Start Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Start Response": {
+      "main": [
+        [
+          {
+            "node": "Respond: Project Started",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Resume Project": {
+      "main": [
+        [
+          {
+            "node": "Validate Resume Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Resume Input": {
+      "main": [
+        [
+          {
+            "node": "Resume Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Lookup Project in Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Resume Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Project in Database": {
+      "main": [
+        [
+          {
+            "node": "Project Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Project Found?": {
+      "main": [
+        [
+          {
+            "node": "Resume Main Orchestrator (Async)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Project Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Main Orchestrator (Async)": {
+      "main": [
+        [
+          {
+            "node": "Build Resume Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Resume Response": {
+      "main": [
+        [
+          {
+            "node": "Respond: Project Resumed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Governance Batch Response": {
+      "main": [
+        [
+          {
+            "node": "Validate Governance Batch Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Governance Batch Input": {
+      "main": [
+        [
+          {
+            "node": "Governance Batch Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Governance Batch Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Resume Waiting Governance Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Governance Batch Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Waiting Governance Workflow": {
+      "main": [
+        [
+          {
+            "node": "Build Governance Batch Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Governance Batch Response": {
+      "main": [
+        [
+          {
+            "node": "Respond: Governance Batch Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Project Status": {
+      "main": [
+        [
+          {
+            "node": "Validate Status Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Status Input": {
+      "main": [
+        [
+          {
+            "node": "Status Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "Get Project Status from Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Status Validation Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Project Status from Database": {
+      "main": [
+        [
+          {
+            "node": "Status Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Found?": {
+      "main": [
+        [
+          {
+            "node": "Build Status Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond: Status Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Status Response": {
+      "main": [
+        [
+          {
+            "node": "Respond: Project Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ai-product-factory"
+  },
+  "id": "ai-product-factory-api-gateway",
+  "tags": [
+    {
+      "id": "ai-product-factory",
+      "name": "AI Product Factory"
+    }
+  ]
+}
