@@ -383,7 +383,7 @@
     },
     {
       "parameters": {
-        "url": "={{ 'https://c3po.etrox.de/webhook-waiting/governance_batch_' + $json.scavenging_id }}",
+        "url": "={{ ($env.N8N_WEBHOOK_BASE_URL || $env.WEBHOOK_URL || 'https://c3po.etrox.de') + '/webhook-waiting/governance_batch_' + $json.scavenging_id }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify({ scavenging_id: $json.scavenging_id, project_id: $json.project_id, decisions: $json.decisions, submitted_at: $json.submitted_at }) }}",

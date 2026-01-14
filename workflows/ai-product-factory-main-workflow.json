@@ -59,7 +59,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -117,7 +117,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -206,7 +206,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -297,7 +297,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -421,7 +421,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -444,7 +444,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -467,7 +467,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -491,7 +491,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -514,7 +514,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -538,7 +538,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -562,7 +562,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",

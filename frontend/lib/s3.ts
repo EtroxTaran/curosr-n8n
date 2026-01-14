@@ -30,6 +30,7 @@ function getS3Client(): S3Client {
         secretAccessKey: secretKey,
       },
       forcePathStyle: true, // Required for SeaweedFS
+      maxAttempts: 3, // Retry configuration for transient failures
     });
   }
   return s3Client;

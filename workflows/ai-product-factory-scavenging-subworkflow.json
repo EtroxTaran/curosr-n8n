@@ -2,6 +2,24 @@
   "name": "AI Product Factory - Context Scavenging",
   "nodes": [
     {
+      "parameters": {},
+      "id": "error-trigger",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-200, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error Handler - Log workflow errors for centralized handling\n// This node captures any workflow errors and formats them for logging\n\nconst error = $input.first().json;\n\nconst errorDetails = {\n  timestamp: new Date().toISOString(),\n  workflow: 'AI Product Factory - Context Scavenging',\n  error_type: error.execution?.error?.name || 'UnknownError',\n  error_message: error.execution?.error?.message || 'No error message available',\n  error_stack: error.execution?.error?.stack || '',\n  execution_id: error.execution?.id || 'unknown',\n  node_name: error.execution?.lastNodeExecuted || 'unknown',\n  mode: error.execution?.mode || 'unknown',\n  retry_of: error.execution?.retryOf || null,\n  severity: 'ERROR',\n  recoverable: false\n};\n\n// Log to console for n8n logs\nconsole.error('Scavenging Error:', JSON.stringify(errorDetails, null, 2));\n\nreturn {\n  json: errorDetails\n};"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 400]
+    },
+    {
       "parameters": {
         "workflowInputs": {
           "values": [
@@ -74,7 +92,7 @@
         "workflowId": {
           "__rl": true,
           "mode": "name",
-          "value": "AI Product Factory - S3 Operations"
+          "value": "AI Product Factory - S3 Storage Operations"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
@@ -463,6 +481,17 @@
     }
   ],
   "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "Subworkflow Entry Point": {
       "main": [
         [
