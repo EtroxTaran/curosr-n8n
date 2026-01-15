@@ -82,10 +82,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h localhost -U ${POSTGRES_USER:-n8n} -d ${POSTGRES_DB:-n8n}"]
+      test: ["CMD-SHELL", "pg_isready -h localhost -U n8n -d n8n"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
 
   # --- 3. Redis Cache ---
   redis:
@@ -164,11 +165,11 @@ services:
     ports:
       - "8888:8888"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8888/status"]
+      test: ["CMD-SHELL", "nc -z localhost 8888 || exit 1"]
       interval: 10s
       timeout: 5s
-      start_period: 15s
-      retries: 5
+      start_period: 20s
+      retries: 10
 
   # --- 7. Frontend Dashboard ---
   dashboard:
