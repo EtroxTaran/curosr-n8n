@@ -25,10 +25,12 @@ This system uses specialized AI agents working together to:
 - **Cost Optimization**: Smart model selection (GPT-4 for reasoning, GPT-4o-mini for extraction)
 - **Dashboard UI**: React-based dashboard with Google OAuth, ADR viewer, and artifact management
 - **CI/CD Pipeline**: GitHub Actions for automated workflow sync and deployment
+- **Observability**: Structured JSON logging with correlation IDs for distributed tracing
+- **Resilient APIs**: Retry logic with exponential backoff and comprehensive error handling
 
 ### Version
 
-Current version: **v2.8.0** (2026-01-14)
+Current version: **v2.8.2** (2026-01-15)
 
 ---
 
@@ -1637,7 +1639,13 @@ The frontend dashboard provides a web-based interface for managing AI Product Fa
 | `/api/auth/*` | GET/POST | Better-Auth authentication routes |
 | `/api/start-project` | POST | Create new project and trigger workflow |
 | `/api/presigned-url` | POST | Generate S3 presigned URL for file upload |
-| `/api/governance` | POST | Submit batch governance decisions |
+| `/api/governance` | POST | Submit batch governance decisions (with retry) |
+
+**API Features:**
+- **Correlation IDs**: All responses include `x-correlation-id` header for distributed tracing
+- **Structured Logging**: JSON logs in production, human-readable in development
+- **Retry Logic**: Automatic retry with exponential backoff for n8n webhook calls
+- **Request Context**: Method, path, user-agent, client IP captured for debugging
 
 ### Running the Dashboard
 
@@ -1733,11 +1741,14 @@ ai-product-factory/
 │   │   ├── db.ts                         # PostgreSQL client
 │   │   ├── s3.ts                         # SeaweedFS client (with presigned URLs)
 │   │   ├── schemas.ts                    # Zod validation schemas
-│   │   ├── n8n.ts                        # n8n webhook client
+│   │   ├── n8n.ts                        # n8n webhook client (with retry logic)
+│   │   ├── logger.ts                     # Structured logging utility
+│   │   ├── request-context.ts            # Request context & correlation ID handling
 │   │   └── export.ts                     # ZIP export utility
 │   ├── tests/                            # Frontend component tests
 │   │   ├── setup.ts                      # Vitest setup with Radix UI mocks
-│   │   └── GovernanceWidget.test.tsx     # GovernanceWidget tests (24 tests)
+│   │   ├── GovernanceWidget.test.tsx     # GovernanceWidget tests (24 tests)
+│   │   └── request-context.test.ts       # Request context tests (26 tests)
 │   ├── vitest.config.ts                  # Frontend Vitest configuration
 │   └── types/                            # TypeScript types
 ├── tests/                                 # Backend integration tests
@@ -1778,8 +1789,8 @@ ai-product-factory/
 │       └── TITAN_AGENT_PROMPTS.md         # Complete agent prompt templates
 │
 ├── vitest.config.ts                       # Root Vitest configuration (backend only)
-├── n8n-mcp-diagnosis.md                   # MCP troubleshooting guide
-└── claude.md                               # This file
+├── DEPLOYMENT_DOKPLOY.md                  # Dokploy deployment guide
+└── CLAUDE.md                              # This file (Claude integration guide)
 ```
 
 ---
@@ -1799,8 +1810,11 @@ ai-product-factory/
     ├── vitest.config.ts          # Frontend config - React component tests
     └── tests/
         ├── setup.ts              # Radix UI mocks and test setup
-        └── GovernanceWidget.test.tsx  # Component tests (24 tests)
+        ├── GovernanceWidget.test.tsx  # Component tests (24 tests)
+        └── request-context.test.ts    # Request context tests (26 tests)
 ```
+
+**Total Tests:** 59 (9 backend + 50 frontend)
 
 ### Running Tests
 
@@ -2319,13 +2333,159 @@ When running `npm run test:all`, you'll see output like:
 ✓ Backend tests passed (9 tests)
 
 [6/6] Running frontend tests...
-✓ Frontend tests passed (24 tests)
+✓ Frontend tests passed (50 tests)
 
 ╔══════════════════════════════════════════════════════════════╗
 ║                     Test Summary                              ║
 ╚══════════════════════════════════════════════════════════════╝
-  All tests passed! ✓ (33 total)
+  All tests passed! ✓ (59 total)
 ```
+
+---
+
+## Observability & Logging
+
+The AI Product Factory includes comprehensive structured logging and request tracing for production observability.
+
+### Structured Logging
+
+All API routes use structured JSON logging in production and human-readable colored logs in development.
+
+**Logger Configuration** (`frontend/lib/logger.ts`):
+
+```typescript
+import { logger, Logger } from '@/lib/logger';
+
+// Create contextual loggers
+const log = logger.child({ component: 'my-feature' });
+log.info('Operation completed', { userId, projectId });
+log.error('Operation failed', error, { context: 'additional data' });
+```
+
+**Log Levels:**
+- `debug` - Detailed debugging information (development only)
+- `info` - Normal operational messages
+- `warn` - Warning conditions (retries, missing optional config)
+- `error` - Error conditions requiring attention
+
+**Environment Variables:**
+- `LOG_LEVEL` - Minimum log level (default: `debug` in dev, `info` in prod)
+- `NODE_ENV` - Determines output format (JSON in production, colored in development)
+- `ENABLE_TEST_LOGS` - Enable logs during test runs (disabled by default)
+
+### Correlation IDs & Request Tracing
+
+Every API request gets a correlation ID for distributed tracing across services.
+
+**Request Context Pattern** (`frontend/lib/request-context.ts`):
+
+```typescript
+import {
+  createRequestContext,
+  logRequestStart,
+  logRequestComplete,
+  logRequestError,
+  withCorrelationId,
+} from '@/lib/request-context';
+
+// In API route handler
+POST: async ({ request }) => {
+  const startTime = Date.now();
+  const ctx = createRequestContext(request);
+  const log = ctx.logger.child({ operation: 'my-operation' });
+
+  logRequestStart(ctx);
+
+  try {
+    // ... handler logic
+    const response = Response.json({ success: true });
+    logRequestComplete(ctx, 200, Date.now() - startTime);
+    return withCorrelationId(response, ctx.correlationId);
+  } catch (error) {
+    logRequestError(ctx, error, 500);
+    return withCorrelationId(errorResponse, ctx.correlationId);
+  }
+}
+```
+
+**Correlation ID Sources** (in priority order):
+1. `x-correlation-id` header
+2. `x-request-id` header
+3. `traceparent` header (W3C Trace Context)
+4. Auto-generated UUID
+
+**Response Headers:**
+All API responses include `x-correlation-id` header for client-side tracing.
+
+### Log Output Formats
+
+**Production (JSON):**
+```json
+{
+  "timestamp": "2026-01-15T10:30:45.123Z",
+  "level": "info",
+  "message": "Request completed",
+  "context": {
+    "correlationId": "abc123",
+    "method": "POST",
+    "path": "/api/start-project",
+    "statusCode": 200,
+    "durationMs": 245
+  }
+}
+```
+
+**Development (Colored):**
+```
+[10:30:45] INFO  Request completed {"correlationId":"abc123","statusCode":200}
+```
+
+### Retry Logic & Error Handling
+
+The `fetchWithRetry` function provides resilient HTTP calls with structured logging:
+
+```typescript
+import { fetchWithRetry, RetryOptions } from '@/lib/n8n';
+
+const options: RetryOptions = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 30000,
+  timeoutMs: 60000,
+  logger: log,  // Optional structured logger
+  onRetry: (error, attempt) => {
+    log.warn('Retry attempt', { attempt, error: error.message });
+  },
+};
+
+const response = await fetchWithRetry(url, fetchOptions, options);
+```
+
+**Retryable Errors:**
+- Network errors (ECONNREFUSED, ECONNRESET, ETIMEDOUT)
+- Server errors (5xx status codes)
+- Timeout errors
+
+**Non-Retryable:**
+- Client errors (4xx status codes)
+- Validation errors
+
+### Monitoring Integration
+
+Structured logs can be aggregated by log management systems:
+
+| System | Integration |
+|--------|-------------|
+| **Grafana Loki** | JSON logs parsed automatically |
+| **ELK Stack** | Use Filebeat with JSON parsing |
+| **Datadog** | Auto-detect JSON format |
+| **CloudWatch** | Native JSON log insights |
+
+**Recommended Dashboards:**
+- Request latency by endpoint
+- Error rate by correlation ID
+- Retry counts by service
+- Active project workflows
 
 ---
 
@@ -2718,6 +2878,8 @@ Follow the comprehensive testing checklist in `workflows/TESTING_CHECKLIST.md`:
 See `workflows/CONVERSION_SUMMARY.md` for complete change history.
 
 **Recent Versions**:
+- **v2.8.2** (2026-01-15): Structured logging with correlation IDs, request-context utilities, comprehensive test coverage (59 tests)
+- **v2.8.1** (2026-01-15): Security hardening, input validation with Zod schemas, database schema updates for chat messages
 - **v2.8.0** (2026-01-14): Added Error Trigger nodes to all adversarial loops, S3 retry configuration, diagnostic audit tooling
 - **v2.7.0** (2026-01-14): S3-only storage migration, removed Google Drive dependency
 - **v2.6.0** (2026-01-14): Batch governance UI (Tech Stack Configurator), Generative UI components

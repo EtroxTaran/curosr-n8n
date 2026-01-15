@@ -1,80 +1,147 @@
-import { createAPIFileRoute } from "@tanstack/react-start/api";
+import { createFileRoute } from "@tanstack/react-router";
 import { GovernanceResponseSchema } from "@/lib/schemas";
+import { fetchWithRetry, type RetryOptions } from "@/lib/n8n";
+import {
+  createRequestContext,
+  logRequestStart,
+  logRequestComplete,
+  logRequestError,
+  withCorrelationId,
+} from "@/lib/request-context";
 
-export const APIRoute = createAPIFileRoute("/api/governance")({
-  POST: async ({ request }) => {
-    try {
-      const body = await request.json();
+export const Route = createFileRoute("/api/governance")({
+  server: {
+    handlers: {
+      POST: async ({ request }) => {
+        const startTime = Date.now();
+        const ctx = createRequestContext(request);
+        const log = ctx.logger.child({ operation: "governance-submit" });
 
-      // Validate request body with Zod
-      const parseResult = GovernanceResponseSchema.safeParse(body);
-      if (!parseResult.success) {
-        return Response.json(
-          {
-            error: "Invalid governance response",
-            details: parseResult.error.flatten().fieldErrors,
-          },
-          { status: 400 }
-        );
-      }
+        logRequestStart(ctx);
 
-      const governanceResponse = parseResult.data;
+        try {
+          const body = await request.json();
 
-      // Forward to n8n webhook for batch governance processing
-      const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
-      if (!n8nWebhookUrl) {
-        throw new Error("N8N_WEBHOOK_URL is not configured");
-      }
+          // Validate request body with Zod
+          const parseResult = GovernanceResponseSchema.safeParse(body);
+          if (!parseResult.success) {
+            log.warn("Invalid governance request payload", {
+              errors: parseResult.error.flatten().fieldErrors,
+            });
+            const response = Response.json(
+              {
+                error: "Invalid governance response",
+                details: parseResult.error.flatten().fieldErrors,
+              },
+              { status: 400 }
+            );
+            logRequestComplete(ctx, 400, Date.now() - startTime);
+            return withCorrelationId(response, ctx.correlationId);
+          }
 
-      const webhookEndpoint = `${n8nWebhookUrl}/governance-batch`;
+          const governanceResponse = parseResult.data;
 
-      const n8nResponse = await fetch(webhookEndpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(governanceResponse),
-      });
+          log.info("Processing governance decisions", {
+            projectId: governanceResponse.project_id,
+            scavengingId: governanceResponse.scavenging_id,
+            decisionsCount: governanceResponse.decisions.length,
+          });
 
-      if (!n8nResponse.ok) {
-        const errorText = await n8nResponse.text();
-        console.error("n8n governance webhook error:", errorText);
-        return Response.json(
-          {
-            error: "Failed to process governance decisions",
-            message: `n8n returned ${n8nResponse.status}`,
-          },
-          { status: 502 }
-        );
-      }
+          // Forward to n8n webhook for batch governance processing
+          const n8nWebhookUrl = process.env.N8N_WEBHOOK_URL;
+          if (!n8nWebhookUrl) {
+            throw new Error("N8N_WEBHOOK_URL is not configured");
+          }
 
-      // Parse n8n response if any
-      let n8nResult = {};
-      try {
-        n8nResult = await n8nResponse.json();
-      } catch {
-        // n8n might not return JSON
-      }
+          const webhookEndpoint = `${n8nWebhookUrl}/governance-batch`;
 
-      return Response.json({
-        success: true,
-        message: "Governance decisions submitted successfully",
-        scavenging_id: governanceResponse.scavenging_id,
-        decisions_count: governanceResponse.decisions.length,
-        approved_count: governanceResponse.decisions.filter(
-          (d) => d.action === "approve"
-        ).length,
-        n8n_response: n8nResult,
-      });
-    } catch (error) {
-      console.error("Error processing governance response:", error);
-      return Response.json(
-        {
-          error: "Failed to process governance decisions",
-          message: error instanceof Error ? error.message : "Unknown error",
-        },
-        { status: 500 }
-      );
-    }
+          // Use fetchWithRetry for resilience against transient failures
+          const retryOptions: RetryOptions = {
+            maxRetries: 3,
+            baseDelayMs: 1000,
+            maxDelayMs: 30000,
+            timeoutMs: 60000, // 1 minute timeout for governance processing
+            onRetry: (error, attempt) => {
+              log.warn("n8n webhook retry", {
+                attempt,
+                error: error.message,
+                webhookEndpoint,
+              });
+            },
+          };
+
+          const n8nResponse = await fetchWithRetry(
+            webhookEndpoint,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-correlation-id": ctx.correlationId,
+              },
+              body: JSON.stringify(governanceResponse),
+            },
+            retryOptions
+          );
+
+          if (!n8nResponse.ok) {
+            const errorText = await n8nResponse.text();
+            log.error("n8n governance webhook failed", new Error(errorText), {
+              statusCode: n8nResponse.status,
+              webhookEndpoint,
+            });
+            const response = Response.json(
+              {
+                error: "Failed to process governance decisions",
+                message: `n8n returned ${n8nResponse.status}`,
+              },
+              { status: 502 }
+            );
+            logRequestComplete(ctx, 502, Date.now() - startTime);
+            return withCorrelationId(response, ctx.correlationId);
+          }
+
+          // Parse n8n response if any
+          let n8nResult = {};
+          try {
+            n8nResult = await n8nResponse.json();
+          } catch {
+            // n8n might not return JSON
+          }
+
+          const approvedCount = governanceResponse.decisions.filter(
+            (d) => d.action === "approve"
+          ).length;
+
+          log.info("Governance decisions processed successfully", {
+            projectId: governanceResponse.project_id,
+            decisionsCount: governanceResponse.decisions.length,
+            approvedCount,
+          });
+
+          const response = Response.json({
+            success: true,
+            message: "Governance decisions submitted successfully",
+            scavenging_id: governanceResponse.scavenging_id,
+            decisions_count: governanceResponse.decisions.length,
+            approved_count: approvedCount,
+            n8n_response: n8nResult,
+          });
+
+          logRequestComplete(ctx, 200, Date.now() - startTime);
+          return withCorrelationId(response, ctx.correlationId);
+        } catch (error) {
+          logRequestError(ctx, error, 500);
+          const response = Response.json(
+            {
+              error: "Failed to process governance decisions",
+              message: error instanceof Error ? error.message : "Unknown error",
+            },
+            { status: 500 }
+          );
+          logRequestComplete(ctx, 500, Date.now() - startTime);
+          return withCorrelationId(response, ctx.correlationId);
+        }
+      },
+    },
   },
 });
