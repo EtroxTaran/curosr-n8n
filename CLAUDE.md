@@ -512,6 +512,738 @@ create automated UI tests based on the documented user flows."
 
 ---
 
+## Perplexity MCP Best Practices
+
+Perplexity is a core research component of the AI Product Factory, providing real-time web search with AI summarization. This section covers best practices for using Perplexity MCP effectively within this project.
+
+**Why Perplexity?** Unlike static knowledge cutoffs in LLMs, Perplexity searches the live web, providing up-to-date information for fact-checking, market research, and technology evaluation. This is critical for generating accurate Product Vision and Architecture documents.
+
+### Understanding Perplexity's Role
+
+Perplexity serves three primary functions in this project:
+
+| Function | Phase | Agent | Purpose |
+|----------|-------|-------|---------|
+| **Fact-checking** | Phase 1 (Vision) | Critic | Verify market claims and statistics |
+| **Risk research** | Phase 2 (Architecture) | Fixer | Find mitigation strategies for identified risks |
+| **Tech enrichment** | Phase 0 (Scavenging) | Research Tool | Discover alternatives to detected technologies |
+
+### Research Types and When to Use Them
+
+The Perplexity Research subworkflow supports five research types. Choose the appropriate type for your query:
+
+```
+fact_check        → Verify claims with supporting evidence and citations
+market_research   → Analyze market trends, key players, growth projections
+best_practices    → Industry best practices with implementation examples
+risk_mitigation   → Proven mitigation strategies and case studies
+competitive_analysis → Competitor intelligence and market positioning
+```
+
+#### Usage Examples
+
+**Fact-checking a claim**:
+```
+You: "Use Perplexity to fact-check: 'The global SaaS market is projected
+to reach $700 billion by 2030'"
+
+Claude: [Uses Perplexity with research_type: "fact_check"]
+Returns: Verified claim with 3-5 authoritative sources
+```
+
+**Researching risk mitigation**:
+```
+You: "Use Perplexity to research mitigation strategies for
+microservices data consistency challenges"
+
+Claude: [Uses Perplexity with research_type: "risk_mitigation"]
+Returns: Saga pattern, event sourcing, CQRS with case studies
+```
+
+**Finding technology alternatives**:
+```
+You: "Use Perplexity to find alternatives to PostgreSQL for
+a high-write event streaming use case"
+
+Claude: [Uses Perplexity with research_type: "best_practices"]
+Returns: TimescaleDB, ClickHouse, Apache Kafka with pros/cons
+```
+
+### Best Practices for Effective Queries
+
+#### 1. Be Specific and Contextual
+
+**Good**:
+```
+"Research best practices for implementing OAuth 2.0 with PKCE
+in a React SPA with Node.js backend"
+```
+
+**Poor**:
+```
+"Research authentication"
+```
+
+#### 2. Include Constraints
+
+**Good**:
+```
+"Find risk mitigation strategies for Kubernetes pod autoscaling
+in AWS EKS with cost constraints under $5000/month"
+```
+
+**Poor**:
+```
+"How to scale Kubernetes"
+```
+
+#### 3. Request Specific Deliverables
+
+**Good**:
+```
+"Provide 3 alternative message queue solutions to RabbitMQ,
+comparing throughput, latency, and operational complexity"
+```
+
+**Poor**:
+```
+"What's better than RabbitMQ"
+```
+
+### Combining Perplexity with Project Workflows
+
+#### Pre-Research Before Vision Generation
+
+Before starting a Titan workflow, use Perplexity to gather market context:
+
+```
+You: "Before generating documentation for my fintech startup:
+1. Use Perplexity to research current fintech regulatory trends in EU
+2. Use Perplexity to find best practices for PSD2 compliance
+3. Then start the Titan workflow with this research as context"
+
+Claude: [Executes Perplexity research, then includes findings in Titan input]
+```
+
+#### Validate Architecture Decisions
+
+After generating architecture documentation, validate key decisions:
+
+```
+You: "The architecture document recommends Apache Kafka for event streaming.
+Use Perplexity to:
+1. Verify this is still the industry best practice for our scale (10K events/sec)
+2. Research any emerging alternatives we should consider
+3. Find case studies of similar implementations"
+```
+
+#### Enrich Tech Stack Governance
+
+During Phase 0, Perplexity automatically enriches detected technologies with alternatives. You can also manually request deeper research:
+
+```
+You: "The Scavenger found we're using MongoDB. Use Perplexity to research:
+1. When MongoDB is the right choice vs alternatives
+2. Common scaling challenges at 100GB+ data volumes
+3. Best practices for MongoDB in a microservices architecture"
+```
+
+### Rate Limiting and Cost Optimization
+
+Perplexity API calls are rate-limited. Follow these practices:
+
+1. **Batch related queries**: Combine multiple related questions into one request
+2. **Cache results**: Perplexity findings are stored in the knowledge graph for reuse
+3. **Use appropriate depth**: Not every claim needs fact-checking - prioritize critical assertions
+4. **Leverage workflow integration**: Let the automated workflow handle routine research
+
+**Cost-conscious querying**:
+```
+# Instead of 5 separate queries:
+"Research authentication best practices"
+"Research JWT vs sessions"
+"Research OAuth providers"
+"Research MFA implementation"
+"Research password policies"
+
+# Use one comprehensive query:
+"Research authentication best practices for a B2B SaaS application,
+covering: JWT vs sessions trade-offs, recommended OAuth providers,
+MFA implementation patterns, and password policy standards. Include
+specific recommendations for a React/Node.js stack."
+```
+
+### Integrating Results with Knowledge Graph
+
+Perplexity research can be stored in Graphiti for future reference:
+
+```
+You: "Research microservices communication patterns and store the findings
+in the knowledge graph for project 'MicroserviceApp'"
+
+Claude: [Executes Perplexity research]
+[Stores findings in Graphiti with project scope]
+[Future Vision/Architecture generation will use this context]
+```
+
+### Troubleshooting Perplexity Issues
+
+#### Problem: "Perplexity rate limit exceeded"
+
+**Solution**: The workflow includes a 1-second delay between calls. If you're making manual queries, space them out:
+```
+# Wait between queries
+You: "Use Perplexity to research X" [wait 2 seconds]
+You: "Use Perplexity to research Y"
+```
+
+#### Problem: "Research results seem outdated"
+
+**Solution**: Perplexity searches the live web, but results depend on query specificity:
+```
+# Add temporal context
+"Research React 19 best practices (2025-2026)"
+"What are the current (January 2026) alternatives to Terraform"
+```
+
+#### Problem: "Sources not returned"
+
+**Solution**: The response parsing expects URLs in a specific format. If sources are missing:
+1. Check the raw response in workflow execution logs
+2. URLs are extracted via regex: `https?://[^\s)]+`
+3. Ensure the Perplexity model is returning properly formatted responses
+
+### Security Considerations for Perplexity
+
+1. **API Key Protection**: Store `PERPLEXITY_API_KEY` in environment variables, never in code
+2. **Query Sanitization**: Don't include sensitive data (passwords, API keys) in research queries
+3. **Result Validation**: Perplexity results are AI-generated summaries - verify critical claims
+4. **Rate Monitoring**: Set up billing alerts on your Perplexity account
+
+### Advanced: Custom Research Workflows
+
+For project-specific research needs, you can extend the Perplexity Research subworkflow:
+
+```javascript
+// Example: Add custom research type in the Input Validator node
+const researchTypes = {
+  // Existing types...
+  'compliance_check': {
+    prefix: 'Research compliance requirements for',
+    suffix: 'Include specific regulations, certifications needed, and implementation timelines.'
+  },
+  'cost_analysis': {
+    prefix: 'Analyze cost implications of',
+    suffix: 'Include TCO estimates, hidden costs, and cost optimization strategies.'
+  }
+};
+```
+
+### Quick Reference: Perplexity Commands
+
+```
+# Fact-checking
+"Use Perplexity to fact-check: [claim]"
+
+# Market research
+"Use Perplexity to research market trends for [industry/technology]"
+
+# Best practices
+"Use Perplexity to find best practices for [topic] in [context]"
+
+# Risk mitigation
+"Use Perplexity to research mitigation strategies for [risk]"
+
+# Competitive analysis
+"Use Perplexity to analyze competitors in [market segment]"
+
+# Technology comparison
+"Use Perplexity to compare [tech A] vs [tech B] for [use case]"
+```
+
+### Research-Driven Project Development
+
+Use Perplexity systematically throughout the AI Product Factory workflow:
+
+#### Before Starting a Project
+
+Research the domain and competitive landscape:
+
+```
+You: "I'm about to start a project for a healthcare scheduling app.
+Use Perplexity to research:
+1. Current healthcare tech trends (2025-2026)
+2. HIPAA compliance requirements for scheduling apps
+3. Existing solutions and their limitations
+4. Best practices for healthcare UX design"
+
+Claude: [Executes 4 Perplexity queries]
+[Returns comprehensive research summary]
+[This context will improve Vision document quality]
+```
+
+#### During Tech Governance (Phase 0)
+
+When the Scavenger finds technologies, validate with Perplexity:
+
+```
+You: "The Scavenger found we're using Redis for caching.
+Use Perplexity to research:
+1. Redis vs alternatives (Memcached, Valkey) for session caching
+2. Redis clustering best practices for high availability
+3. Common Redis scaling pitfalls in production"
+
+Claude: [Returns comparison and recommendations]
+[Helps make informed governance decisions]
+```
+
+#### During Architecture Design (Phase 2)
+
+Validate architectural decisions with industry research:
+
+```
+You: "The Architect is recommending a microservices pattern.
+Use Perplexity to research:
+1. When monolith-to-microservices migration makes sense
+2. Inter-service communication patterns (gRPC vs REST vs messaging)
+3. Case studies of similar-scale microservices implementations
+4. Common microservices anti-patterns to avoid"
+```
+
+#### After Document Generation
+
+Verify key claims in the final documents:
+
+```
+You: "The Product Vision claims our TAM is $50B. Use Perplexity to:
+1. Fact-check this market size claim
+2. Find the most recent industry reports
+3. Identify the source methodology for market sizing"
+```
+
+### Perplexity for Continuous Improvement
+
+Use Perplexity to improve the AI Product Factory itself:
+
+```
+# Research new patterns
+"Use Perplexity to research the latest multi-agent orchestration
+patterns in 2026, focusing on improvements over supervisor pattern"
+
+# Find optimization strategies
+"Use Perplexity to research token optimization strategies for
+LLM workflows, focusing on context window management"
+
+# Evaluate new models
+"Use Perplexity to compare Claude Sonnet 3.5 vs Claude Opus 4.5
+for document generation tasks, including cost and quality tradeoffs"
+
+# Discover tooling improvements
+"Use Perplexity to research n8n workflow best practices in 2026,
+focusing on AI agent nodes and memory management"
+```
+
+---
+
+## Best Practices for AI Product Factory
+
+This section consolidates industry best practices for multi-agent AI orchestration systems, informed by research from [n8n's production deployment guide](https://blog.n8n.io/best-practices-for-deploying-ai-agents-in-production/), [Microsoft's AI Agent Design Patterns](https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-design-patterns), and [Google's Multi-Agent Patterns Guide](https://developers.googleblog.com/developers-guide-to-multi-agent-patterns-in-adk/).
+
+### Multi-Agent Orchestration Patterns
+
+The AI Product Factory implements a **Supervisor Pattern** with **Sequential Pipeline** elements. Understanding these patterns helps optimize your workflows.
+
+#### Pattern Selection Guide
+
+| Pattern | When to Use | AI Product Factory Usage |
+|---------|-------------|--------------------------|
+| **Supervisor/Centralized** | Strict governance, compliance, reliability | Main Orchestrator coordinates all phases |
+| **Sequential Pipeline** | Ordered data processing, dependent steps | Phase 0 → Phase 1 → Phase 2 → Audit |
+| **Generator-Critic** | High-quality output requiring validation | Creator → Critic → Refiner loop |
+| **Event-Driven** | High scalability, loose coupling | Webhook triggers, async processing |
+
+**Reference**: [Choosing the Right Orchestration Pattern](https://www.kore.ai/blog/choosing-the-right-orchestration-pattern-for-multi-agent-systems)
+
+#### Best Practices for Multi-Agent Systems
+
+1. **Isolate Agent Failures**: Design agents to fail independently without cascading
+   ```
+   ✅ Each agent has its own error handler (Error Trigger nodes added in v2.8.0)
+   ✅ Circuit breakers prevent infinite loops after 5 iterations
+   ✅ State persists between failures for resumability
+   ```
+
+2. **Surface Errors Explicitly**: Don't hide errors from downstream agents
+   ```
+   ✅ Critic returns structured feedback, not silent failures
+   ✅ Dr. Doom explicitly flags risks for Fixer to address
+   ✅ Decision log captures all errors and recovery actions
+   ```
+
+3. **Minimize Token Consumption**: Different patterns vary by 200%+ in token usage
+   ```
+   ✅ Context windows are bounded (5-10 messages per agent)
+   ✅ Only relevant context passed between phases
+   ✅ Embeddings used for semantic retrieval vs. full documents
+   ```
+
+### Adversarial Loop Best Practices
+
+The Generator-Critic pattern is central to AI Product Factory's quality assurance. Based on [Google's LoopAgent research](https://medium.com/google-developer-experts/build-ai-agents-that-self-correct-until-its-right-adk-loopagent-f620bf351462):
+
+#### When Loops Work Best
+
+Adversarial loops are effective when:
+- **Quality is measurable**: The Critic can score output objectively (0-100 scale)
+- **Refinement is possible**: The Refiner has actionable context to improve
+- **Exit conditions are clear**: Score threshold (≥90) provides unambiguous termination
+
+#### When to Avoid Loops
+
+- **Latency-critical scenarios**: If you need sub-200ms responses
+- **Vague criteria**: "If the Validator can't clearly articulate why it failed, the Generator will just spin in circles"
+- **Diminishing returns**: After 3 iterations, improvements typically plateau
+
+#### AI Product Factory Loop Configuration
+
+```bash
+# Recommended settings (balanced quality/speed)
+FACTORY_MAX_ITERATIONS=5              # Circuit breaker
+FACTORY_SCORE_THRESHOLD=90            # Exit when good enough
+FACTORY_MEMORY_CRITIC=6               # Limited context for focused critique
+
+# High-quality settings (slower, more iterations)
+FACTORY_MAX_ITERATIONS=7
+FACTORY_SCORE_THRESHOLD=95
+
+# Fast settings (fewer iterations, accept lower quality)
+FACTORY_MAX_ITERATIONS=3
+FACTORY_SCORE_THRESHOLD=85
+```
+
+#### Implementing Effective Critics
+
+Based on [AI Agent Prompting Best Practices](https://medium.com/automation-labs/ai-agent-prompting-for-n8n-the-best-practices-that-actually-work-in-2025-8511c5c16294):
+
+1. **Use structured scoring rubrics**: The Critic evaluates against specific dimensions
+2. **Provide actionable feedback**: "Section 3.2 lacks technical depth" > "Could be better"
+3. **Include improvement suggestions**: Guide the Refiner with concrete recommendations
+4. **Set appropriate temperatures**: Low (0.2-0.3) for consistent, objective critique
+
+### Context Engineering Over Prompt Engineering
+
+According to [Anthropic's research](https://blog.n8n.io/llm-agents/), in 2025-2026, it's no longer "prompt engineering" that matters—it's **context engineering**:
+
+> "The question is no longer 'how do I craft the perfect prompt,' but 'which configuration of context leads to the desired behavior.'"
+
+#### Context Engineering in AI Product Factory
+
+| Context Source | How It's Used | Best Practice |
+|----------------|---------------|---------------|
+| **Knowledge Graph (Graphiti)** | Technical standards, decisions | Store globally-approved patterns |
+| **Vector DB (Qdrant)** | Semantic document search | Embed all input documents |
+| **Iteration History** | Previous drafts and critiques | Pass to Refiner for improvement |
+| **Perplexity Research** | Real-time web knowledge | Fact-check critical claims |
+
+#### Optimizing Context Windows
+
+```javascript
+// n8n Memory Configuration Best Practices
+{
+  "visionary": {
+    "memoryType": "window",
+    "windowSize": 8,           // Creative agent needs more context
+    "reason": "Needs full project context for coherent vision"
+  },
+  "critic": {
+    "memoryType": "window",
+    "windowSize": 6,           // Analytical agent needs less
+    "reason": "Focus on current document vs. history"
+  },
+  "scavenger": {
+    "memoryType": "simple",
+    "windowSize": 5,           // Extraction is stateless
+    "reason": "Each document processed independently"
+  }
+}
+```
+
+### Production Deployment Best Practices
+
+Based on [n8n's 15 Best Practices for Production AI Agents](https://blog.n8n.io/best-practices-for-deploying-ai-agents-in-production/):
+
+#### Infrastructure Phase
+
+1. **Choose deployment model wisely**:
+   - Self-hosted (Docker): Full control, requires maintenance
+   - n8n Cloud: Managed, less operational burden
+   - Hybrid: n8n Cloud + self-hosted Qdrant/Graphiti
+
+2. **Enable Queue Mode for scalability**:
+   ```yaml
+   # docker-compose.yml
+   n8n:
+     environment:
+       - EXECUTIONS_MODE=queue
+       - QUEUE_BULL_REDIS_HOST=redis
+   ```
+
+3. **Configure proper resource limits**:
+   ```yaml
+   n8n:
+     deploy:
+       resources:
+         limits:
+           memory: 4G
+         reservations:
+           memory: 2G
+   ```
+
+#### Development Phase
+
+4. **Start simple, add complexity iteratively**:
+   - Begin with single-agent workflows
+   - Add adversarial loops after base works
+   - Integrate knowledge graph last
+
+5. **Use modular, reusable subworkflows**:
+   ```
+   ✅ titan-graphiti-subworkflow.json    (reusable knowledge ops)
+   ✅ titan-qdrant-subworkflow.json      (reusable vector ops)
+   ✅ ai-product-factory-s3-subworkflow.json  (reusable storage ops)
+   ```
+
+6. **Implement comprehensive error handling**:
+   - Error Trigger nodes on all critical paths (added v2.8.0)
+   - Retry logic with exponential backoff for S3/API calls
+   - Graceful degradation when services unavailable
+
+#### Pre-Deployment Phase
+
+7. **Test with real-world scenarios**:
+   - Use `workflows/TESTING_CHECKLIST.md`
+   - Test with various document types (PDF, MD, DOCX)
+   - Verify edge cases (empty docs, huge files, malformed input)
+
+8. **Monitor token usage before going live**:
+   ```
+   Average tokens per run: ~150K
+   Cost per run: ~$0.10-0.15
+   Set billing alerts at: $50/day
+   ```
+
+#### Deployment Phase
+
+9. **Use CI/CD for workflow synchronization**:
+   ```bash
+   # Automated via GitHub Actions
+   npm run sync-workflows           # Push local → n8n
+   npm run sync-workflows:dry-run   # Preview changes
+   ```
+
+10. **Enable health checks**:
+    ```bash
+    # Dashboard health endpoint
+    curl https://dashboard.example.com/api/health
+
+    # n8n health check
+    curl https://n8n.example.com/healthz
+    ```
+
+#### Maintenance Phase
+
+11. **Monitor execution logs regularly**:
+    - Check iteration counts (>5 suggests prompt issues)
+    - Monitor quality scores (consistent <80 needs investigation)
+    - Track execution times (>45 min indicates bottlenecks)
+
+12. **Implement graceful retirement**:
+    - Archive old projects to cold storage
+    - Clean up Qdrant collections periodically
+    - Prune knowledge graph of outdated standards
+
+### Human-in-the-Loop Best Practices
+
+Based on [Event-Driven Multi-Agent Systems](https://www.confluent.io/blog/event-driven-multi-agent-systems/):
+
+> "Trustworthy AI systems combine deterministic workflows, probabilistic models, and human oversight. Automation ensures control, AI handles complexity, and humans own risk, edge cases, and final responsibility."
+
+#### When to Require Human Approval
+
+| Scenario | Human Required | AI Product Factory Implementation |
+|----------|----------------|-----------------------------------|
+| **Tech stack decisions** | ✅ Yes | Batch Governance UI in Phase 0 |
+| **Final document approval** | ✅ Yes | Audit phase + manual review |
+| **Iteration limit reached** | ✅ Yes | Circuit breaker prompts for guidance |
+| **Individual critique scores** | ❌ No | Automated loop continuation |
+| **Intermediate drafts** | ❌ No | Stored for audit, not reviewed |
+
+#### Best Practices for Human Checkpoints
+
+1. **Batch decisions when possible**: The Tech Stack Configurator allows approving multiple technologies at once
+2. **Provide context for decisions**: Show confidence scores, alternatives, source documents
+3. **Set reasonable timeouts**: `FACTORY_CONFIRMATION_TIMEOUT=3600` (1 hour default)
+4. **Allow async continuation**: State persists for resume after human decision
+
+### Error Handling & Resilience
+
+Based on [Agent Orchestration Best Practices](https://videosdk.live/developer-hub/ai_agent/agent-orchestration):
+
+#### Retry Configuration
+
+```javascript
+// S3 operations (added v2.8.0)
+{
+  "retryCount": 3,
+  "retryDelay": 1000,        // 1 second
+  "retryBackoff": true       // Exponential backoff
+}
+
+// API calls to LLMs
+{
+  "retryCount": 2,
+  "retryDelay": 5000,        // 5 seconds (rate limit recovery)
+  "retryBackoff": false      // Fixed delay for rate limits
+}
+```
+
+#### Circuit Breaker Pattern
+
+```
+After 5 iterations without meeting threshold:
+1. Log current state and scores
+2. Prompt human for guidance
+3. Options: accept, provide feedback, lower threshold, restart
+4. Never spin indefinitely
+```
+
+#### Graceful Degradation
+
+| Service Down | Fallback Behavior |
+|--------------|-------------------|
+| **Graphiti** | Continue without knowledge graph enrichment |
+| **Qdrant** | Skip semantic search, use keyword matching |
+| **Perplexity** | Skip fact-checking, mark claims as unverified |
+| **S3** | Fail workflow (critical dependency) |
+
+### Cost Optimization Strategies
+
+Based on the [n8n AI Capabilities Review](https://latenode.com/blog/low-code-no-code-platforms/n8n-setup-workflows-self-hosting-templates/n8n-ai-agents-2025-complete-capabilities-review-implementation-reality-check):
+
+#### Model Selection by Task
+
+| Task Type | Recommended Model | Cost Impact |
+|-----------|-------------------|-------------|
+| **Creative generation** | Claude Sonnet 3.5 | Base cost |
+| **Critique/Analysis** | GPT-4o | Similar to Sonnet |
+| **Extraction** | GPT-4o-mini | 90% cheaper |
+| **Embeddings** | text-embedding-3-small | Minimal |
+| **Research** | Perplexity Sonar | Per-query pricing |
+
+#### Token Optimization
+
+1. **Bound context windows**: Limit memory to essential messages
+2. **Summarize before passing**: Compress iteration history
+3. **Use embeddings for retrieval**: Don't pass full documents
+4. **Enable prompt caching**: Up to 90% savings on system prompts
+
+#### Batch Processing
+
+```bash
+# Process multiple related projects together
+# Shared knowledge graph context reduces redundant extraction
+
+# Example: Process all microservices for a platform
+project_ids=("auth-service" "user-service" "payment-service")
+# Scavenger runs once, shares standards across all
+```
+
+### Security Best Practices
+
+Based on [AI Agent Development Lifecycle](https://www.aalpha.net/blog/ai-agent-development-lifecycle/):
+
+1. **Embed security in every stage**:
+   - Input validation on all webhook endpoints
+   - Sanitize user-uploaded documents
+   - Never log sensitive data (API keys, credentials)
+
+2. **Protect against adversarial attacks**:
+   - Rate limit API endpoints
+   - Validate file types and sizes
+   - Monitor for prompt injection attempts
+
+3. **Implement audit trails**:
+   - Decision log captures all agent outputs
+   - S3 versioning for artifact history
+   - n8n execution logs for debugging
+
+### Known Limitations & Workarounds
+
+Based on [n8n AI Agent Limitations](https://latenode.com/blog/low-code-no-code-platforms/n8n-setup-workflows-self-hosting-templates/n8n-ai-agents-2025-complete-capabilities-review-implementation-reality-check):
+
+| Limitation | Impact | Workaround |
+|------------|--------|------------|
+| **No built-in persistent memory** | Context lost between sessions | Use Graphiti + Qdrant for external memory |
+| **No automatic error recovery** | Failed workflows need manual restart | State persistence + Smart Start handler |
+| **Limited multi-step reasoning** | Complex tasks may fail | Break into subworkflows with checkpoints |
+| **Rate limit sensitivity** | High-volume workflows throttled | Queue mode + retry logic with backoff |
+
+### Research-Driven Development with Perplexity
+
+Use Perplexity MCP to validate architectural decisions before implementation:
+
+```
+# Before adding a new technology
+"Use Perplexity to research best practices for [technology] in [context],
+including common pitfalls, scaling considerations, and alternatives."
+
+# Before designing new features
+"Use Perplexity to find case studies of [feature type] implementations
+in similar AI orchestration systems."
+
+# Before production deployment
+"Use Perplexity to research production deployment checklist for
+n8n workflows with AI agents, focusing on monitoring and observability."
+```
+
+### Quick Reference: Best Practices Checklist
+
+```markdown
+## Pre-Development
+✅ Define clear success criteria (quality thresholds)
+✅ Research similar implementations with Perplexity
+✅ Plan agent responsibilities and handoffs
+✅ Design error handling strategy
+
+## Development
+✅ Start simple, add complexity iteratively
+✅ Use modular subworkflows
+✅ Implement comprehensive logging
+✅ Add Error Trigger nodes to all critical paths
+✅ Configure appropriate memory windows per agent
+
+## Testing
+✅ Test each subworkflow independently
+✅ Test with various document types and sizes
+✅ Verify error handling paths
+✅ Check iteration counts and quality scores
+
+## Deployment
+✅ Enable queue mode for scalability
+✅ Set up health checks
+✅ Configure billing alerts
+✅ Document runbooks for common issues
+
+## Maintenance
+✅ Monitor execution logs weekly
+✅ Review quality score trends
+✅ Update agent prompts based on feedback
+✅ Archive completed projects
+✅ Rotate API keys quarterly
+```
+
+---
+
 ## Prerequisites & Dependencies
 
 ### n8n Configuration
@@ -1003,11 +1735,22 @@ ai-product-factory/
 │   │   ├── schemas.ts                    # Zod validation schemas
 │   │   ├── n8n.ts                        # n8n webhook client
 │   │   └── export.ts                     # ZIP export utility
+│   ├── tests/                            # Frontend component tests
+│   │   ├── setup.ts                      # Vitest setup with Radix UI mocks
+│   │   └── GovernanceWidget.test.tsx     # GovernanceWidget tests (24 tests)
+│   ├── vitest.config.ts                  # Frontend Vitest configuration
 │   └── types/                            # TypeScript types
+├── tests/                                 # Backend integration tests
+│   ├── backend.test.ts                   # n8n, PostgreSQL, S3 tests
+│   └── setup.ts                          # Test setup (future)
 ├── scripts/
-│   └── sync-workflows.js                 # n8n workflow sync script
+│   ├── sync-workflows.js                 # n8n workflow sync script
+│   ├── run-tests.sh                      # Full test suite runner (Docker + tests)
+│   ├── test-sync-dry-run.sh              # Workflow sync dry-run test
+│   └── test-migration-idempotency.sh     # Database migration test
 ├── init-scripts/
-│   └── 01-project-state.sql              # Database schema
+│   └── 01-project-state.sql              # Database schema (requires pgcrypto)
+├── docker-compose.test.yml               # Test environment (PostgreSQL, SeaweedFS, n8n)
 ├── workflows/                             # n8n workflow definitions
 │   │
 │   │   # Titan Workflow Suite
@@ -1034,8 +1777,554 @@ ai-product-factory/
 │       ├── TESTING_CHECKLIST.md           # QA procedures and test cases
 │       └── TITAN_AGENT_PROMPTS.md         # Complete agent prompt templates
 │
+├── vitest.config.ts                       # Root Vitest configuration (backend only)
 ├── n8n-mcp-diagnosis.md                   # MCP troubleshooting guide
 └── claude.md                               # This file
+```
+
+---
+
+## Testing
+
+The AI Product Factory includes comprehensive test suites for both backend integration tests and frontend component tests using Vitest.
+
+### Test Structure
+
+```
+ai-product-factory/
+├── vitest.config.ts              # Root config - backend tests only
+├── tests/
+│   └── backend.test.ts           # Backend integration tests (9 tests)
+└── frontend/
+    ├── vitest.config.ts          # Frontend config - React component tests
+    └── tests/
+        ├── setup.ts              # Radix UI mocks and test setup
+        └── GovernanceWidget.test.tsx  # Component tests (24 tests)
+```
+
+### Running Tests
+
+```bash
+# Run all backend tests (from project root)
+npm run test:backend
+
+# Run all frontend tests (from project root)
+npm run test:frontend
+
+# Run frontend tests directly (from frontend directory)
+cd frontend && npm run test
+
+# Watch mode for development
+npm run test:watch              # Backend
+cd frontend && npm run test:watch  # Frontend
+
+# Run with coverage
+npm run test:coverage
+```
+
+### Backend Integration Tests
+
+The backend tests in `tests/backend.test.ts` verify integration with n8n, PostgreSQL, and S3/SeaweedFS.
+
+#### Service Availability Detection
+
+Backend tests gracefully skip when Docker services aren't running:
+
+```typescript
+// Service availability flags
+let n8nAvailable = false;
+let postgresAvailable = false;
+let s3Available = false;
+
+// Quick connectivity check with timeout
+async function checkN8nConnectivity(): Promise<boolean> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2000);
+    const response = await fetch(`${N8N_WEBHOOK_URL}/healthz`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+```
+
+#### Timeout Wrapper Pattern
+
+Tests use a timeout wrapper to prevent hanging when services are unavailable:
+
+```typescript
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), timeoutMs);
+  });
+  const result = await Promise.race([promise, timeoutPromise]);
+  clearTimeout(timeoutId!);
+  return result;
+}
+
+// Usage in beforeAll:
+const [n8nResult, pgResult, s3Result] = await Promise.all([
+  withTimeout(checkN8nConnectivity(), 3000),
+  withTimeout(checkPostgresConnectivity(), 3000),
+  withTimeout(checkS3Connectivity(s3Client), 3000),
+]);
+```
+
+#### Test Categories
+
+| Test Suite | Tests | Purpose |
+|------------|-------|---------|
+| **n8n Webhook Handshake** | 2 | Verify webhook endpoints accept/reject requests |
+| **Database Integrity** | 3 | Validate schema, defaults, foreign keys |
+| **S3 Connectivity** | 3 | Test file upload, verification, error handling |
+| **Governance Webhook** | 1 | Verify governance batch payload contract |
+
+### Frontend Component Tests
+
+Frontend tests in `frontend/tests/` use React Testing Library with Vitest.
+
+#### Test Setup (setup.ts)
+
+The setup file mocks browser APIs required by Radix UI components:
+
+```typescript
+import { expect, afterEach, vi } from 'vitest';
+import { cleanup } from '@testing-library/react';
+import * as matchers from '@testing-library/jest-dom/matchers';
+
+// Extend Vitest with jest-dom matchers
+expect.extend(matchers);
+
+// Mock ResizeObserver for Radix UI components
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+// Mock IntersectionObserver for Radix UI components
+class IntersectionObserverMock {
+  readonly root: Element | null = null;
+  readonly rootMargin: string = '';
+  readonly thresholds: ReadonlyArray<number> = [];
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords(): IntersectionObserverEntry[] { return []; }
+}
+
+globalThis.ResizeObserver = ResizeObserverMock;
+globalThis.IntersectionObserver = IntersectionObserverMock;
+
+// Mock matchMedia for responsive components
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: vi.fn().mockImplementation(query => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })),
+});
+
+// Mock scrollIntoView for Radix UI components
+Element.prototype.scrollIntoView = vi.fn();
+
+afterEach(() => { cleanup(); });
+```
+
+#### Frontend Vitest Configuration
+
+The frontend has its own Vitest config to use React 18 (separate from root's React 19):
+
+```typescript
+// frontend/vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: [path.resolve(__dirname, './tests/setup.ts')],  // Absolute path
+    include: ['tests/**/*.test.tsx'],
+    exclude: ['node_modules/**'],
+    testTimeout: 30000,
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, '.'),
+    },
+  },
+});
+```
+
+#### GovernanceWidget Test Suite
+
+Tests for the Tech Stack Configurator component:
+
+| Test Category | Tests | Purpose |
+|---------------|-------|---------|
+| **Rendering** | 5 | Verify table renders technologies, badges, confidence |
+| **Alternative Selection** | 2 | Test dropdown selection and scope switching |
+| **Batch Actions** | 2 | Verify Approve All, Skip All buttons |
+| **Contract - Confirm Payload** | 2 | Validate output matches Zod schema exactly |
+| **Edge Cases** | 3 | Empty stack, loading state, disabled state |
+
+### Test Configuration Details
+
+#### Root Vitest Config (backend only)
+
+```typescript
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import path from 'path';
+
+export default defineConfig({
+  test: {
+    globals: true,
+    include: ['tests/**/*.test.ts'],
+    exclude: ['node_modules/**', 'frontend/**'],  // Exclude frontend
+    testTimeout: 30000,
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './frontend'),
+    },
+  },
+});
+```
+
+#### Why Separate Configs?
+
+The project uses **React 18** in frontend but has **React 19** installed at the root level (from other dependencies). Running frontend tests from the root would cause version mismatch errors:
+
+```
+Error: A React Element from an older version of React was rendered
+```
+
+Separating configs ensures each test suite uses the correct React version.
+
+### Troubleshooting Test Failures
+
+#### Backend Tests Timing Out
+
+**Symptom**: Tests hang for 30s then timeout
+
+**Cause**: Docker services (PostgreSQL, n8n, SeaweedFS) not running
+
+**Solution**: Tests gracefully skip when services are unavailable. Start Docker if you need full integration tests:
+```bash
+docker-compose up -d postgres seaweedfs n8n
+```
+
+#### Frontend Tests: "Cannot find module './tests/setup.ts'"
+
+**Symptom**: Vitest can't locate setup file
+
+**Cause**: Relative path resolution from wrong directory
+
+**Solution**: Use absolute path in vitest.config.ts:
+```typescript
+setupFiles: [path.resolve(__dirname, './tests/setup.ts')]
+```
+
+#### Frontend Tests: "ResizeObserver is not defined"
+
+**Symptom**: Radix UI components throw errors about missing browser APIs
+
+**Cause**: JSDOM doesn't include these APIs
+
+**Solution**: Add mocks in setup.ts (see setup code above)
+
+#### Frontend Tests: Buttons/Elements Not Found
+
+**Symptom**: `getByRole` or `getByText` fails to find elements
+
+**Cause**: Lucide React icons don't add expected class names
+
+**Solution**: Use class-based filtering instead of SVG queries:
+```typescript
+// Instead of: btn.querySelector('svg.lucide-globe')
+// Use: btn.className.includes('h-8') && btn.className.includes('w-8')
+```
+
+#### State Update Timing Issues
+
+**Symptom**: Assertions fail because React hasn't re-rendered yet
+
+**Solution**: Wrap assertions in `waitFor`:
+```typescript
+await waitFor(() => {
+  expect(screen.getByText(/3 approved/i)).toBeInTheDocument();
+});
+```
+
+### Adding New Tests
+
+#### Backend Integration Test
+
+```typescript
+// tests/backend.test.ts
+describe('Test X: New Feature', () => {
+  beforeEach(() => {
+    if (!serviceAvailable) {
+      console.log('   ⏭️  Skipping: service not available');
+    }
+  });
+
+  it('should do something', async () => {
+    if (!serviceAvailable) return;  // Skip gracefully
+
+    // Your test logic here
+  });
+});
+```
+
+#### Frontend Component Test
+
+```typescript
+// frontend/tests/MyComponent.test.tsx
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MyComponent } from '../components/MyComponent';
+
+describe('MyComponent', () => {
+  it('should render correctly', () => {
+    render(<MyComponent prop="value" />);
+    expect(screen.getByText('Expected Text')).toBeInTheDocument();
+  });
+
+  it('should handle user interaction', async () => {
+    const user = userEvent.setup();
+    const mockHandler = vi.fn();
+
+    render(<MyComponent onAction={mockHandler} />);
+
+    await user.click(screen.getByRole('button'));
+
+    await waitFor(() => {
+      expect(mockHandler).toHaveBeenCalled();
+    });
+  });
+});
+```
+
+### CI/CD Integration
+
+Tests run automatically in GitHub Actions on push/PR:
+
+```yaml
+# .github/workflows/deploy.yml
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run test:backend
+      - run: npm run test:frontend
+```
+
+### Docker Test Environment
+
+A self-contained Docker Compose test environment is available for running full integration tests locally.
+
+#### Test Environment Services
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| **PostgreSQL** | `postgres:16-alpine` | 5432 | Database with init scripts |
+| **SeaweedFS** | `chrislusf/seaweedfs:latest` | 8888 | S3-compatible object storage |
+| **n8n** | `n8nio/n8n:latest` | 5678 | Workflow engine |
+
+#### Test Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run test:env:up` | Start test environment (PostgreSQL, SeaweedFS, n8n) |
+| `npm run test:env:down` | Stop and cleanup test environment |
+| `npm run test:env:logs` | View test environment logs |
+| `npm run test:env:status` | Check test environment status |
+| `npm run test:all` | Full test cycle: start → test → cleanup |
+| `npm run test:backend` | Run backend tests only |
+| `npm run test:frontend` | Run frontend tests only |
+| `npm run test:integration` | Start env, run backend tests, cleanup |
+
+#### Running the Full Test Suite
+
+```bash
+# Option 1: Automated full cycle (recommended)
+npm run test:all
+
+# Option 2: Manual control
+npm run test:env:up         # Start services
+npm run test:backend        # Run backend tests
+npm run test:frontend       # Run frontend tests
+npm run test:env:down       # Cleanup
+```
+
+#### Docker Compose Test Configuration
+
+**File:** `docker-compose.test.yml`
+
+```yaml
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: pf-postgres-test
+    environment:
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: n8n
+      POSTGRES_DB: n8n
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n -d n8n"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  seaweedfs-test:
+    image: chrislusf/seaweedfs:latest
+    container_name: pf-seaweedfs-test
+    command: server -s3 -s3.port=8333 -master.volumeSizeLimitMB=100
+    ports:
+      - "8888:8333"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8333/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n-test:
+    image: n8nio/n8n:latest
+    container_name: pf-n8n-test
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=false
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres-test
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=n8n
+    ports:
+      - "5678:5678"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+```
+
+#### Test Runner Script
+
+The `scripts/run-tests.sh` script provides a complete automated test cycle:
+
+1. **Dependency check** - Verifies Docker and npm are installed
+2. **Cleanup** - Removes any existing test containers
+3. **Start services** - Launches Docker Compose test environment
+4. **Health checks** - Waits for all services to be healthy
+5. **Backend tests** - Runs Vitest backend integration tests
+6. **Frontend tests** - Runs Vitest frontend component tests
+7. **Summary** - Reports pass/fail status
+8. **Cleanup** - Tears down test environment on exit
+
+#### S3 Bucket Auto-Creation
+
+The backend tests automatically create the S3 bucket if it doesn't exist:
+
+```typescript
+async function checkS3Connectivity(s3Client: S3Client): Promise<boolean> {
+  try {
+    await s3Client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }));
+    return true;
+  } catch (createErr: unknown) {
+    // BucketAlreadyOwnedByYou or 409 Conflict = bucket exists = connected
+    if (errName === 'BucketAlreadyOwnedByYou' || errCode === 409) {
+      return true;
+    }
+    throw createErr;
+  }
+}
+```
+
+#### PostgreSQL pgcrypto Extension
+
+The init script requires the `pgcrypto` extension for `gen_random_bytes()`:
+
+```sql
+-- init-scripts/01-project-state.sql
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+```
+
+#### Graceful Test Skipping
+
+Tests gracefully skip when optional services aren't fully available:
+
+```typescript
+// n8n webhook tests skip when no workflows deployed (404)
+if (response.status === 404) {
+  console.log('⏭️  Skipping: workflow not deployed in test n8n instance');
+  return;
+}
+```
+
+#### Test Results Summary
+
+When running `npm run test:all`, you'll see output like:
+
+```
+╔══════════════════════════════════════════════════════════════╗
+║     AI Product Factory - Integration Test Suite              ║
+╚══════════════════════════════════════════════════════════════╝
+
+[1/6] Checking dependencies... ✓
+[2/6] Stopping any existing test containers... ✓
+[3/6] Starting test services...
+[4/6] Waiting for services to be healthy...
+  PostgreSQL: Ready
+  SeaweedFS:  Ready
+  n8n:        Ready
+✓ All services ready
+
+[5/6] Running backend tests...
+📋 Backend Integration Tests - Service Availability:
+   n8n:        ✅ Available
+   PostgreSQL: ✅ Available
+   S3:         ✅ Available
+✓ Backend tests passed (9 tests)
+
+[6/6] Running frontend tests...
+✓ Frontend tests passed (24 tests)
+
+╔══════════════════════════════════════════════════════════════╗
+║                     Test Summary                              ║
+╚══════════════════════════════════════════════════════════════╝
+  All tests passed! ✓ (33 total)
 ```
 
 ---

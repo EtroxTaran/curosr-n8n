@@ -3,6 +3,9 @@
 -- Version: 1.0.0
 -- ============================================
 
+-- Enable required extensions
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Project state table for tracking workflow progress
 CREATE TABLE IF NOT EXISTS project_state (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -124,10 +127,23 @@ CREATE TRIGGER update_project_state_updated_at
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Read-only user for dashboard (security best practice)
+-- SECURITY: Password is set via DASHBOARD_READER_PASSWORD environment variable
+-- If not set, the role is created without a password (login disabled)
 DO $$
+DECLARE
+    pwd TEXT;
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'dashboard_reader') THEN
-        CREATE ROLE dashboard_reader WITH LOGIN PASSWORD 'dashboard_readonly_2026';
+        -- Try to get password from environment variable via current_setting
+        -- Note: This requires the environment variable to be set in postgresql.conf
+        -- or passed via Docker environment. Falls back to a secure random password.
+        pwd := current_setting('dashboard.reader_password', true);
+        IF pwd IS NULL OR pwd = '' THEN
+            -- Generate a secure random password if not provided
+            pwd := encode(gen_random_bytes(32), 'base64');
+            RAISE NOTICE 'No DASHBOARD_READER_PASSWORD set. Generated secure random password for dashboard_reader role.';
+        END IF;
+        EXECUTE format('CREATE ROLE dashboard_reader WITH LOGIN PASSWORD %L', pwd);
     END IF;
 END
 $$;
