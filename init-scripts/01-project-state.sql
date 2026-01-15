@@ -86,6 +86,14 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
     content TEXT NOT NULL,
 
+    -- Message type for special rendering (e.g., governance widget)
+    message_type VARCHAR(50) DEFAULT 'text' CHECK (message_type IN (
+        'text', 'governance_request', 'phase_update', 'error', 'system_notification'
+    )),
+
+    -- Rich payload for structured content (governance decisions, etc.)
+    payload JSONB DEFAULT NULL,
+
     -- n8n response metadata
     n8n_execution_id VARCHAR(255),
     response_time_ms INTEGER,
@@ -109,6 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_decision_log_phase ON decision_log_entries(phase)
 CREATE INDEX IF NOT EXISTS idx_chat_messages_project ON chat_messages(project_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_type ON chat_messages(message_type);
 
 -- Function to update updated_at timestamp automatically
 CREATE OR REPLACE FUNCTION update_updated_at_column()

@@ -1,0 +1,64 @@
+# Prometheus Configuration for AI Product Factory
+# Documentation: https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+
+global:
+  scrape_interval: 15s # Default scrape interval
+  evaluation_interval: 15s # Default evaluation interval
+  external_labels:
+    monitor: 'ai-product-factory'
+
+# Alerting rules configuration (optional - can add alertmanager later)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# Scrape configurations for various services
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # n8n Workflow Engine metrics
+  - job_name: 'n8n'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['n8n:5678']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'n8n'
+
+  # PostgreSQL metrics (via postgres_exporter - optional)
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+
+  # Redis metrics (via redis_exporter - optional)
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
+
+  # Qdrant Vector Database metrics
+  - job_name: 'qdrant'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['qdrant:6333']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'qdrant'
+
+  # Dashboard Application (if exposing metrics)
+  - job_name: 'dashboard'
+    metrics_path: /api/metrics
+    static_configs:
+      - targets: ['dashboard:3000']
+    # Dashboard metrics endpoint may not exist yet - scrape errors are expected
+
+  # Traefik Reverse Proxy metrics (if enabled)
+  - job_name: 'traefik'
+    static_configs:
+      - targets: ['traefik:8080']

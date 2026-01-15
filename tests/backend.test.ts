@@ -4,8 +4,9 @@ import postgres from 'postgres';
 
 // Environment configuration
 const S3_ENDPOINT = process.env.S3_ENDPOINT || 'http://localhost:8888';
-const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || 'test-access-key';
-const S3_SECRET_KEY = process.env.S3_SECRET_KEY || 'test-secret-key';
+// SECURITY: Default test credentials match docker-compose.test.yml
+const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || 'testadmin';
+const S3_SECRET_KEY = process.env.S3_SECRET_KEY || 'testsecret123';
 const S3_BUCKET = process.env.S3_BUCKET || 'product-factory-artifacts';
 const DATABASE_URL = process.env.DATABASE_URL || 'postgres://n8n:n8n@localhost:5432/n8n';
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678';
