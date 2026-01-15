@@ -58,7 +58,7 @@ services:
     networks:
       - n8n_network
     volumes:
-      - n8n_data:/home/node/.n8n
+      - n8n_data_v2:/home/node/.n8n
     ports:
       - "5678:5678"
     healthcheck:
@@ -98,7 +98,7 @@ services:
     networks:
       - n8n_network
     volumes:
-      - redis_data:/data
+      - redis_data_v2:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -114,7 +114,7 @@ services:
     networks:
       - n8n_network
     volumes:
-      - qdrant_data:/qdrant/storage
+      - qdrant_data_v2:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:6333/readyz || exit 1"]
       interval: 10s
@@ -147,7 +147,7 @@ services:
     networks:
       - n8n_network
     volumes:
-      - falkordb_data:/data
+      - falkordb_data_v2:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -164,7 +164,7 @@ services:
     networks:
       - n8n_network
     volumes:
-      - seaweedfs_data:/data
+      - seaweedfs_data_v2:/data
     ports:
       - "8888:8888"
     healthcheck:
@@ -218,9 +218,9 @@ networks:
     driver: bridge
 
 volumes:
-  n8n_data:
+  n8n_data_v2:
   postgres18_data:
-  redis_data:
-  qdrant_data:
-  falkordb_data:
-  seaweedfs_data:
+  redis_data_v2:
+  qdrant_data_v2:
+  falkordb_data_v2:
+  seaweedfs_data_v2:
