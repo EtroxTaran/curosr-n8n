@@ -67,7 +67,7 @@ services:
       - n8n_data_v2:/home/node/.n8n
     # ports removed - Traefik handles routing
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:5678/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -121,7 +121,7 @@ services:
     volumes:
       - qdrant_data_v2:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:6333/readyz || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/readyz > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -140,11 +140,11 @@ services:
     networks:
       - n8n_network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health > /dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 10s
-      retries: 3
-      start_period: 30s
+      retries: 5
+      start_period: 60s
 
   falkordb:
     image: falkordb/falkordb:latest

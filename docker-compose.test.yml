@@ -56,8 +56,8 @@ services:
     volumes:
       - ./monitoring/seaweedfs/entrypoint.sh:/etc/seaweedfs/entrypoint.sh:ro
     healthcheck:
-      # Check the filer port (8888) which has the status endpoint
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8888/"]
+      # Check S3 port (8333) - use GET request instead of HEAD
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8333/ > /dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -85,7 +85,7 @@ services:
       postgres-test:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5678/healthz"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
