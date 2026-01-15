@@ -70,7 +70,7 @@ services:
 
   # --- 2. PostgreSQL Database ---
   postgres:
-    image: postgres:16
+    image: postgres:17
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-n8n}
@@ -89,7 +89,7 @@ services:
 
   # --- 3. Redis Cache ---
   redis:
-    image: redis:alpine
+    image: redis:7.4-alpine
     restart: unless-stopped
     networks:
       - n8n_network
@@ -103,7 +103,7 @@ services:
 
   # --- 4. Vector Database (Qdrant) ---
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.16
     restart: unless-stopped
     environment:
       - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
@@ -164,9 +164,10 @@ services:
     ports:
       - "8888:8888"
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8333/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8888/status"]
       interval: 10s
       timeout: 5s
+      start_period: 15s
       retries: 5
 
   # --- 7. Frontend Dashboard ---
