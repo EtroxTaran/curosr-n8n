@@ -1589,6 +1589,242 @@ Run this validation checklist:
 ✅ Claude Code restarted after MCP configuration changes
 ```
 
+### Dokploy Deployment Issues
+
+This section covers common issues encountered when deploying to Dokploy with Traefik routing.
+
+#### Problem: PostgreSQL version mismatch / health check failing
+
+**Symptoms**: PostgreSQL container fails to start with errors about PGDATA directory not matching expected version.
+
+**Error Example**:
+```
+FATAL: database files are incompatible with server
+DETAIL: The data directory was initialized by PostgreSQL version 16, but this is version 18
+```
+
+**Root Cause**: PostgreSQL major versions use different data directory structures. PostgreSQL 18+ uses `/var/lib/postgresql/18/docker` instead of `/var/lib/postgresql/data`.
+
+**Solution**:
+1. Update docker-compose.dokploy.yml for PostgreSQL 18:
+   ```yaml
+   postgres:
+     image: postgres:18-alpine
+     volumes:
+       # PostgreSQL 18+ uses /var/lib/postgresql (not /var/lib/postgresql/data)
+       - postgres18_data:/var/lib/postgresql
+       - ./init-scripts:/docker-entrypoint-initdb.d:ro
+   ```
+
+2. Rename the volume to force a fresh initialization:
+   ```yaml
+   volumes:
+     postgres18_data:  # New volume name triggers fresh init
+   ```
+
+> **Important**: PostgreSQL 18 (November 2025) introduced a PGDATA path change. Always check the PostgreSQL release notes when upgrading major versions.
+
+#### Problem: Port already allocated error
+
+**Symptoms**: Deployment fails with "port X already allocated" error.
+
+**Error Example**:
+```
+Error response from daemon: driver failed programming external connectivity:
+Bind for 0.0.0.0:3000 failed: port is already allocated
+```
+
+**Solution**: Remove explicit port mappings when using Traefik. Traefik handles routing via reverse proxy, not port bindings:
+
+```yaml
+# ❌ Don't do this with Traefik
+dashboard:
+  ports:
+    - "3000:3000"
+
+# ✅ Do this instead - Traefik handles routing
+dashboard:
+  # ports removed - Traefik handles routing
+  networks:
+    - n8n_network
+```
+
+#### Problem: Module not found in Docker container
+
+**Symptoms**: Dashboard container crashes with module not found errors.
+
+**Error Example**:
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@tanstack/history'
+```
+
+**Root Cause**: Multi-stage Dockerfile doesn't include production dependencies in the runner stage.
+
+**Solution**: Install production dependencies in the runner stage:
+```dockerfile
+# Stage 3: Runner
+FROM node:22-alpine AS runner
+WORKDIR /app
+
+# Copy built application
+COPY --from=builder --chown=dashboard:nodejs /app/dist ./dist
+COPY --from=builder --chown=dashboard:nodejs /app/package.json ./package.json
+COPY --from=builder --chown=dashboard:nodejs /app/package-lock.json ./package-lock.json
+
+# Install production dependencies only
+RUN npm ci --omit=dev
+
+USER dashboard
+CMD ["node", "dist/server/server.js"]
+```
+
+#### Problem: npm ci fails with package lock mismatch
+
+**Symptoms**: Build fails during `npm ci` step.
+
+**Error Example**:
+```
+npm error `npm ci` can only install packages when your package.json and package-lock.json are in sync.
+```
+
+**Root Cause**: package.json was updated but package-lock.json was never regenerated and committed.
+
+**Solution**:
+1. Regenerate the lock file locally:
+   ```bash
+   cd frontend
+   rm -rf node_modules package-lock.json
+   npm install
+   ```
+2. Commit both files together:
+   ```bash
+   git add package.json package-lock.json
+   git commit -m "fix: Sync package-lock.json with package.json"
+   git push
+   ```
+
+#### Problem: SeaweedFS meta_aggregator connection errors
+
+**Symptoms**: SeaweedFS logs show repeated connection refused errors.
+
+**Error Example**:
+```
+meta_aggregator.go:98] failed to subscribe remote meta change: rpc error:
+code = Unavailable desc = connection error:
+desc = "transport: Error while dialing: dial tcp 10.0.0.4:18888: connect: connection refused"
+```
+
+**Root Cause**: SeaweedFS filer component is enabled but not needed for S3-only usage.
+
+**Solution**: Disable the filer component:
+```yaml
+seaweedfs:
+  image: chrislusf/seaweedfs:latest
+  command: "server -s3 -dir=/data -ip=seaweedfs -s3.port=8888 -filer=false"
+```
+
+#### Problem: Redis/FalkorDB memory overcommit warnings
+
+**Symptoms**: Redis and FalkorDB logs show memory warnings.
+
+**Warning Example**:
+```
+WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail.
+To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and reboot
+```
+
+**Root Cause**: Host system kernel parameter needs adjustment.
+
+**Solution**: This requires host-level access (cannot be fixed in Docker Compose):
+```bash
+# Temporary fix (lost on reboot)
+sudo sysctl vm.overcommit_memory=1
+
+# Permanent fix
+echo "vm.overcommit_memory = 1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+> **Note**: On Dokploy managed servers, you may need SSH access to run these commands.
+
+#### Problem: Google OAuth redirect mismatch
+
+**Symptoms**: Google OAuth login fails with redirect URI mismatch error.
+
+**Solution**: Configure the correct redirect URI in Google Cloud Console:
+
+**Authorized redirect URIs**:
+```
+https://dashboard.yourdomain.com/api/auth/callback/google
+```
+
+**Better-Auth Pattern**: The redirect URI follows the pattern:
+```
+https://<AUTH_URL>/api/auth/callback/<provider>
+```
+
+Ensure your `AUTH_URL` environment variable matches your dashboard domain exactly:
+```bash
+AUTH_URL=https://dashboard.yourdomain.com
+```
+
+#### Problem: Volume cleanup for fresh deployments
+
+**Symptoms**: Need to start fresh but can't delete volumes in Dokploy UI.
+
+**Solution**: Rename all volumes to force fresh initialization:
+
+```yaml
+volumes:
+  n8n_data_v2:           # Renamed from n8n_data
+  postgres18_data:       # New name for PostgreSQL 18
+  redis_data_v2:         # Renamed from redis_data
+  qdrant_data_v2:        # Renamed from qdrant_data
+  falkordb_data_v2:      # Renamed from falkordb_data
+  seaweedfs_data_v2:     # Renamed from seaweedfs_data
+```
+
+Update all service volume mounts to use the new names. Old volumes will be cleaned up automatically when orphaned.
+
+#### Problem: n8n Python task runner warning
+
+**Symptoms**: n8n logs show Python task runner error.
+
+**Warning Example**:
+```
+Failed to start Python task runner in internal mode.
+Do you have a valid Python installation available on your path?
+```
+
+**Impact**: Non-critical. This only affects Python-based n8n nodes (not used by AI Product Factory).
+
+**Solution**: Safe to ignore. If you need Python nodes, install Python in your n8n container or use external task runner mode.
+
+### Dokploy Deployment Checklist
+
+```markdown
+## Pre-Deployment
+✅ package.json and package-lock.json are in sync
+✅ Dockerfile installs production dependencies in runner stage
+✅ docker-compose.dokploy.yml has no explicit port mappings
+✅ PostgreSQL volume mount uses correct path for version
+✅ Environment variables configured in Dokploy
+
+## Domain Configuration
+✅ DNS records point to Dokploy server
+✅ Traefik domains configured for each service
+✅ HTTPS enabled with Let's Encrypt
+✅ Google OAuth redirect URI matches AUTH_URL
+
+## Post-Deployment Verification
+✅ All containers show healthy status
+✅ n8n accessible at https://n8n.yourdomain.com/healthz
+✅ Dashboard accessible at https://dashboard.yourdomain.com/api/health
+✅ S3 bucket created and accessible
+✅ Google OAuth login works
+✅ Workflows synced to n8n
+```
+
 ---
 
 ## Dashboard Application

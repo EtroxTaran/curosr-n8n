@@ -245,6 +245,122 @@ curl https://n8n.yourdomain.com/healthz
 curl https://dashboard.yourdomain.com/api/health
 ```
 
+### PostgreSQL Version Mismatch
+
+**Error:**
+```
+FATAL: database files are incompatible with server
+DETAIL: The data directory was initialized by PostgreSQL version 16, but this is version 18
+```
+
+**Cause:** PostgreSQL major versions have incompatible data formats. PostgreSQL 18+ uses a different PGDATA path: `/var/lib/postgresql/18/docker`.
+
+**Solution:**
+1. Update the volume mount in docker-compose.dokploy.yml:
+   ```yaml
+   postgres:
+     image: postgres:18-alpine
+     volumes:
+       # PostgreSQL 18+ uses /var/lib/postgresql (not /var/lib/postgresql/data)
+       - postgres18_data:/var/lib/postgresql
+   ```
+
+2. Rename the volume to create fresh database:
+   ```yaml
+   volumes:
+     postgres18_data:  # New name forces fresh initialization
+   ```
+
+### npm ci Package Lock Mismatch
+
+**Error:**
+```
+npm error `npm ci` can only install packages when your package.json and package-lock.json are in sync.
+```
+
+**Solution:**
+1. Regenerate lock file locally:
+   ```bash
+   cd frontend
+   rm -rf node_modules package-lock.json
+   npm install
+   ```
+2. Commit and push both files:
+   ```bash
+   git add package.json package-lock.json
+   git commit -m "fix: Sync package-lock.json"
+   git push
+   ```
+
+### Module Not Found in Container
+
+**Error:**
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@tanstack/history'
+```
+
+**Cause:** Dockerfile runner stage doesn't install production dependencies.
+
+**Fix:** Ensure runner stage includes dependency installation:
+```dockerfile
+FROM node:22-alpine AS runner
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/package-lock.json ./package-lock.json
+RUN npm ci --omit=dev
+```
+
+### Port Already Allocated
+
+**Error:**
+```
+Bind for 0.0.0.0:3000 failed: port is already allocated
+```
+
+**Cause:** Explicit port mappings conflict with Traefik routing.
+
+**Solution:** Remove all port mappings from docker-compose.dokploy.yml:
+```yaml
+dashboard:
+  # ports removed - Traefik handles routing via domains
+  networks:
+    - n8n_network
+```
+
+### SeaweedFS Connection Errors
+
+**Warning:**
+```
+meta_aggregator.go:98] failed to subscribe remote meta change: connection refused
+```
+
+**Cause:** Filer component enabled but not needed for S3-only mode.
+
+**Solution:** Disable filer with `-filer=false`:
+```yaml
+seaweedfs:
+  command: "server -s3 -dir=/data -ip=seaweedfs -s3.port=8888 -filer=false"
+```
+
+### Redis/FalkorDB Memory Warnings
+
+**Warning:**
+```
+WARNING Memory overcommit must be enabled!
+```
+
+**Cause:** Host kernel setting, cannot fix in Docker Compose.
+
+**Solution (requires SSH access):**
+```bash
+# Temporary
+sudo sysctl vm.overcommit_memory=1
+
+# Permanent
+echo "vm.overcommit_memory = 1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
 ### S3 Upload Issues
 
 **Test S3 connectivity:**
@@ -261,9 +377,35 @@ docker exec ai-product-factory-seaweedfs-1 \
 
 ### Google OAuth Not Working
 
+**Correct redirect URI pattern:**
+```
+https://dashboard.yourdomain.com/api/auth/callback/google
+```
+
+**Checklist:**
 1. Verify `AUTH_URL` matches your dashboard domain exactly
-2. Check redirect URI in Google Cloud Console
+2. Add redirect URI to Google Cloud Console → Credentials → OAuth 2.0 Client
 3. Ensure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are correct
+4. Wait 5-10 minutes for Google's OAuth config to propagate
+
+### Fresh Deployment (Volume Reset)
+
+To start fresh without manual volume deletion:
+
+1. Rename all volumes in docker-compose.dokploy.yml:
+   ```yaml
+   volumes:
+     n8n_data_v2:
+     postgres18_data:
+     redis_data_v2:
+     qdrant_data_v2:
+     falkordb_data_v2:
+     seaweedfs_data_v2:
+   ```
+
+2. Update all service volume mounts to use new names
+
+3. Redeploy - old orphaned volumes will be cleaned up automatically
 
 ### Workflow Sync Failing
 
@@ -277,6 +419,17 @@ N8N_API_URL=https://n8n.yourdomain.com \
 N8N_API_KEY=your-key \
 node scripts/sync-workflows.js --dry-run --verbose
 ```
+
+### n8n Python Task Runner Warning
+
+**Warning:**
+```
+Failed to start Python task runner in internal mode.
+```
+
+**Impact:** Non-critical. Only affects Python-based n8n nodes (not used by AI Product Factory).
+
+**Action:** Safe to ignore unless you need Python nodes.
 
 ## Updating
 
@@ -315,10 +468,12 @@ docker exec ai-product-factory-postgres-1 \
 ### Backup Volumes
 
 Dokploy stores volumes in `/var/lib/docker/volumes/`. Back up:
-- `ai-product-factory_postgres_data`
-- `ai-product-factory_n8n_data`
-- `ai-product-factory_qdrant_data`
-- `ai-product-factory_seaweedfs_data`
+- `ai-product-factory_postgres18_data`
+- `ai-product-factory_n8n_data_v2`
+- `ai-product-factory_redis_data_v2`
+- `ai-product-factory_qdrant_data_v2`
+- `ai-product-factory_falkordb_data_v2`
+- `ai-product-factory_seaweedfs_data_v2`
 
 ### Restore
 
