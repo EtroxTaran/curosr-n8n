@@ -1355,13 +1355,39 @@ Graphiti stores extracted technical standards and maintains project context.
 
 **Setup Options**:
 
-**Docker (Recommended)**:
-```bash
-docker run -d \
-  --name graphiti \
-  -p 8080:8080 \
-  graphiti/graphiti:latest
+**Docker with FalkorDB (Recommended)**:
+```yaml
+# docker-compose.yml snippet
+graphiti:
+  image: zepai/knowledge-graph-mcp:standalone  # IMPORTANT: Use standalone tag for FalkorDB
+  environment:
+    - OPENAI_API_KEY=${OPENAI_API_KEY}
+    - FALKORDB_URI=redis://falkordb:6379       # Connect to FalkorDB container
+    - FALKORDB_PASSWORD=
+    - FALKORDB_DATABASE=default_db
+    - GRAPHITI_GROUP_ID=main
+    - PORT=8000                                 # Server listens on port 8000
+  depends_on:
+    falkordb:
+      condition: service_healthy
+  healthcheck:
+    # Container has curl but NOT wget
+    test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health > /dev/null || exit 1"]
+    interval: 15s
+    timeout: 10s
+    retries: 5
+    start_period: 90s  # Needs time to initialize
+
+falkordb:
+  image: falkordb/falkordb:latest
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
 ```
+
+> **IMPORTANT**: The `zepai/knowledge-graph-mcp:latest` tag expects **Neo4j**, not FalkorDB. You MUST use the `standalone` tag to work with FalkorDB via `FALKORDB_URI`.
 
 **Manual Setup**: See https://github.com/getzep/graphiti
 
@@ -1372,13 +1398,24 @@ Qdrant stores document embeddings for semantic search.
 **Setup Options**:
 
 **Docker (Recommended)**:
-```bash
-docker run -d \
-  --name qdrant \
-  -p 6333:6333 \
-  -v $(pwd)/qdrant_storage:/qdrant/storage \
-  qdrant/qdrant:latest
+```yaml
+# docker-compose.yml snippet
+qdrant:
+  image: qdrant/qdrant:v1.16
+  environment:
+    - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:-}
+  volumes:
+    - qdrant_data:/qdrant/storage
+  healthcheck:
+    # IMPORTANT: Qdrant container does NOT have curl or wget
+    # Use bash TCP check instead
+    test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
 ```
+
+> **NOTE**: The Qdrant Docker image is based on Debian but does NOT include `curl` or `wget`. Health checks must use bash's built-in TCP check via `/dev/tcp/`.
 
 **Qdrant Cloud**: https://cloud.qdrant.io (fully managed)
 
@@ -1394,12 +1431,21 @@ SeaweedFS provides S3-compatible object storage for all documents and artifacts.
 ```yaml
 seaweedfs:
   image: chrislusf/seaweedfs:latest
-  command: server -s3 -s3.port=8333
-  ports:
-    - "8333:8333"
-  volumes:
-    - seaweedfs_data:/data
+  command: "server -s3 -dir=/data -s3.port=8333 -filer=false"
+  healthcheck:
+    # Use master port 9333 for health check (S3 port 8333 requires auth)
+    # Use 127.0.0.1 instead of localhost for reliable container binding
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status > /dev/null 2>&1 || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
 ```
+
+> **IMPORTANT**:
+> - S3 API port (8333) requires authentication - use master port (9333) for health checks
+> - Use `127.0.0.1` instead of `localhost` for reliable container binding
+> - Add `-filer=false` to command if not using filer features (avoids meta_aggregator errors)
 
 **S3 Storage Structure**:
 ```
@@ -1824,6 +1870,198 @@ Do you have a valid Python installation available on your path?
 ✅ Google OAuth login works
 ✅ Workflows synced to n8n
 ```
+
+---
+
+## Docker Health Check Best Practices
+
+This section documents critical learnings about Docker health checks for all services in the AI Product Factory stack. These patterns were validated through extensive local testing.
+
+### General Principles
+
+1. **Use GET requests instead of HEAD**: Many servers (including Nitro/TanStack Start) don't respond to HEAD requests on API endpoints
+   ```yaml
+   # ❌ DON'T use --spider (sends HEAD request)
+   test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"]
+
+   # ✅ DO use -qO- (sends GET request)
+   test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health > /dev/null 2>&1 || exit 1"]
+   ```
+
+2. **Use 127.0.0.1 instead of localhost**: Some containers bind to IP addresses that don't resolve from `localhost`
+   ```yaml
+   # ❌ May fail if localhost doesn't resolve correctly
+   test: ["CMD-SHELL", "wget -qO- http://localhost:9333/..."]
+
+   # ✅ Reliable container binding
+   test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/..."]
+   ```
+
+3. **Check available tools in container**: Not all containers have `curl` or `wget`
+   ```bash
+   # Check what's available
+   docker exec <container> which curl wget nc
+   ```
+
+### Service-Specific Health Checks
+
+| Service | Tool Available | Health Check Command |
+|---------|----------------|---------------------|
+| **n8n** | wget | `wget -qO- http://127.0.0.1:5678/healthz > /dev/null 2>&1 \|\| exit 1` |
+| **PostgreSQL** | pg_isready | `pg_isready -U ${USER} -d ${DB}` |
+| **Redis** | redis-cli | `redis-cli ping` (or with `-a ${PASSWORD}`) |
+| **Qdrant** | bash only | `bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'` |
+| **Graphiti** | curl | `curl -sf http://127.0.0.1:8000/health > /dev/null \|\| exit 1` |
+| **FalkorDB** | redis-cli | `redis-cli ping` |
+| **SeaweedFS** | wget | `wget -qO- http://127.0.0.1:9333/cluster/status > /dev/null 2>&1 \|\| exit 1` |
+| **Frontend** | wget | `wget -qO- http://127.0.0.1:3000/api/health > /dev/null 2>&1 \|\| exit 1` |
+
+### Qdrant: No HTTP Tools Available
+
+The Qdrant Docker image (`qdrant/qdrant:v1.16`) is based on Debian but does **NOT** include `curl`, `wget`, or `nc`. Use bash's built-in TCP check:
+
+```yaml
+qdrant:
+  image: qdrant/qdrant:v1.16
+  healthcheck:
+    # Bash TCP check - works without curl/wget
+    test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 10s
+```
+
+### Graphiti: Use Standalone Tag for FalkorDB
+
+The `zepai/knowledge-graph-mcp:latest` tag expects **Neo4j** and will fail to connect to FalkorDB. Use the `standalone` tag:
+
+```yaml
+graphiti:
+  image: zepai/knowledge-graph-mcp:standalone  # NOT :latest
+  environment:
+    - OPENAI_API_KEY=${OPENAI_API_KEY}
+    - FALKORDB_URI=redis://falkordb:6379
+    - FALKORDB_PASSWORD=
+    - FALKORDB_DATABASE=default_db
+    - GRAPHITI_GROUP_ID=main
+    - PORT=8000  # Server uses port 8000, not 8080
+  healthcheck:
+    # Container has curl but not wget
+    test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health > /dev/null || exit 1"]
+    interval: 15s
+    timeout: 10s
+    retries: 5
+    start_period: 90s  # Needs initialization time
+```
+
+### SeaweedFS: Use Master Port for Health Check
+
+The S3 API port (8333) requires authentication, which makes health checks fail. Use the master port (9333) instead:
+
+```yaml
+seaweedfs:
+  image: chrislusf/seaweedfs:latest
+  command: "server -s3 -dir=/data -s3.port=8333 -filer=false"
+  healthcheck:
+    # ❌ S3 port requires auth
+    # test: ["CMD-SHELL", "wget -qO- http://localhost:8333/..."]
+
+    # ✅ Master port is unauthenticated
+    test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status > /dev/null 2>&1 || exit 1"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 30s
+```
+
+### Start Period Recommendations
+
+Different services require different initialization times:
+
+| Service | Recommended start_period | Reason |
+|---------|-------------------------|--------|
+| **PostgreSQL** | 30s | Database initialization |
+| **Redis** | 5s | Fast startup |
+| **Qdrant** | 10s | Index loading |
+| **FalkorDB** | 5s | Fast startup |
+| **Graphiti** | 90s | LLM client initialization, graph setup |
+| **SeaweedFS** | 30s | Volume initialization |
+| **n8n** | 30s | Database migrations |
+| **Frontend** | 30s | SSR build warm-up |
+
+### Complete Health Check Test Template
+
+Use this compose file to validate all health checks locally:
+
+```yaml
+# /tmp/test-healthchecks.yml
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.16
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  falkordb:
+    image: falkordb/falkordb:latest
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  graphiti:
+    image: zepai/knowledge-graph-mcp:standalone
+    environment:
+      - OPENAI_API_KEY=test-key
+      - FALKORDB_URI=redis://falkordb:6379
+      - PORT=8000
+    depends_on:
+      falkordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health > /dev/null || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 15
+      start_period: 90s
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: "server -s3 -dir=/data -s3.port=8333 -filer=false"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9333/cluster/status > /dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+```
+
+Run with: `docker compose -f /tmp/test-healthchecks.yml up -d`
+Check status: `docker compose -f /tmp/test-healthchecks.yml ps`
 
 ---
 
