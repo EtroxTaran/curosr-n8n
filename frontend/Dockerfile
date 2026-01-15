@@ -8,8 +8,8 @@ RUN npm install -g npm@latest
 # Copy package files
 COPY package.json package-lock.json ./
 
-# Install dependencies (ci for reproducible builds)
-RUN npm ci
+# Install dependencies (ci for reproducible builds, suppress deprecation warnings)
+RUN npm ci --loglevel=error
 
 # Stage 2: Builder
 FROM node:22-alpine AS builder
@@ -41,8 +41,8 @@ COPY --from=builder --chown=dashboard:nodejs /app/.output ./.output
 COPY --from=builder --chown=dashboard:nodejs /app/package.json ./package.json
 COPY --from=builder --chown=dashboard:nodejs /app/package-lock.json ./package-lock.json
 
-# Install production dependencies only
-RUN npm ci --omit=dev
+# Install production dependencies only (suppress deprecation warnings)
+RUN npm ci --omit=dev --loglevel=error
 
 USER dashboard
 
