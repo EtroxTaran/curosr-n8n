@@ -157,7 +157,7 @@ services:
   seaweedfs:
     image: chrislusf/seaweedfs:latest
     restart: unless-stopped
-    command: "server -s3 -dir=/data -ip=seaweedfs -s3.port=8888 -filer.port=8333"
+    command: "server -s3 -dir=/data -ip=seaweedfs -s3.port=8888 -filer=false"
     environment:
       - WEED_MASTER_VOLUME_SIZE_LIMIT_MB=100
     networks:
