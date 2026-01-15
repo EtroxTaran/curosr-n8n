@@ -2,6 +2,9 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
 
+# Update npm to latest
+RUN npm install -g npm@latest
+
 # Copy package files
 COPY package.json package-lock.json ./
 
@@ -11,6 +14,9 @@ RUN npm ci
 # Stage 2: Builder
 FROM node:22-alpine AS builder
 WORKDIR /app
+
+# Update npm to latest
+RUN npm install -g npm@latest
 
 # Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
@@ -25,9 +31,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Create non-root user for security
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 dashboard
+# Update npm to latest and create non-root user
+RUN npm install -g npm@latest && \
+    addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 dashboard
 
 # Copy built application (TanStack Start outputs to .output/)
 COPY --from=builder --chown=dashboard:nodejs /app/.output ./.output
