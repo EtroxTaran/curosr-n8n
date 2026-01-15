@@ -69,8 +69,10 @@ services:
       start_period: 30s
 
   # --- 2. PostgreSQL Database ---
+  # IMPORTANT: PostgreSQL 18 uses new PGDATA structure: /var/lib/postgresql/18/docker
+  # Volume must be deleted and recreated when upgrading from v16/v17 to v18
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-n8n}
@@ -79,10 +81,11 @@ services:
     networks:
       - n8n_network
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # PostgreSQL 18+ uses /var/lib/postgresql (not /var/lib/postgresql/data)
+      - postgres_data:/var/lib/postgresql
       - ./init-scripts:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready || exit 0"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n} -d ${POSTGRES_DB:-n8n}"]
       interval: 5s
       timeout: 5s
       retries: 15
