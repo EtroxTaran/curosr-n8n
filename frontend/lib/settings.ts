@@ -53,6 +53,35 @@ function isPostgresUndefinedTableError(error: unknown): boolean {
   return false;
 }
 
+// ============================================
+// JSONB Value Parsing Helper
+// ============================================
+
+/**
+ * Safely parse a JSONB value from PostgreSQL.
+ *
+ * The pg driver automatically parses JSONB columns into JavaScript values.
+ * However, in some edge cases (or when types are incorrectly specified),
+ * the value might still be a JSON string. This helper handles both cases.
+ *
+ * @param value - The value from a JSONB column (may be parsed or string)
+ * @returns The parsed JavaScript value
+ */
+function parseJsonbValue<T = unknown>(value: unknown): T {
+  // If it's already not a string, it was auto-parsed by pg
+  if (typeof value !== "string") {
+    return value as T;
+  }
+
+  // If it's a string, try to parse it (it might be a JSON string)
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    // If parsing fails, return as-is (it's a plain string value)
+    return value as T;
+  }
+}
+
 // Type definitions
 export interface Setting {
   id: string;
@@ -105,7 +134,7 @@ export async function getSetting<T = unknown>(key: string): Promise<T | null> {
     return null;
   }
 
-  let value = JSON.parse(row.setting_value);
+  let value = parseJsonbValue(row.setting_value);
 
   // Decrypt if this is an encrypted value
   if (row.setting_type === "encrypted" && typeof value === "string") {
@@ -142,7 +171,7 @@ export async function getSettings(
   const result: Record<string, unknown> = {};
 
   for (const row of rows) {
-    let value = JSON.parse(row.setting_value);
+    let value = parseJsonbValue(row.setting_value);
 
     if (row.setting_type === "encrypted" && typeof value === "string") {
       try {
@@ -255,13 +284,14 @@ export async function getSettingForDisplay(
     return null;
   }
 
-  let value = JSON.parse(row.setting_value);
+  let value = parseJsonbValue(row.setting_value);
   let displayValue: string;
 
   if (row.setting_type === "encrypted" || row.is_sensitive) {
     // For encrypted values, decrypt first then mask
+    // Encrypted values are always stored as strings (ciphertext)
     try {
-      const decrypted = decrypt(value);
+      const decrypted = decrypt(value as string);
       displayValue = mask(decrypted, { showFirst: 3, showLast: 4 });
     } catch {
       displayValue = "********";
@@ -303,7 +333,7 @@ async function isSetupCompleteFallback(): Promise<boolean> {
     if (!row) return false;
 
     // JSONB value could be stored as "true" or true
-    const value = JSON.parse(row.setting_value);
+    const value = parseJsonbValue(row.setting_value);
     return value === true;
   } catch (tableError) {
     // Table doesn't exist either - fresh deployment needs migration
@@ -335,8 +365,8 @@ async function isN8nConfiguredFallback(): Promise<boolean> {
     if (!urlRow || !keyRow) return false;
 
     // Check values are not empty
-    const urlValue = JSON.parse(urlRow.setting_value);
-    const keyValue = JSON.parse(keyRow.setting_value);
+    const urlValue = parseJsonbValue(urlRow.setting_value);
+    const keyValue = parseJsonbValue(keyRow.setting_value);
 
     return Boolean(urlValue && urlValue !== "" && keyValue && keyValue !== "");
   } catch (tableError) {
