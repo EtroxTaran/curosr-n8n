@@ -241,6 +241,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
+    volumes:
+      - ./workflows:/workflows:ro               # Workflow JSON files for Setup Wizard import
     environment:
       - NODE_ENV=production
       - HOST=0.0.0.0
