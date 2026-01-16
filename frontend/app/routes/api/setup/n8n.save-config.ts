@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getServerSession } from "@/lib/auth";
-import { saveN8nConfig } from "@/lib/settings";
+import { saveN8nConfig, getN8nConfig, isN8nConfigured } from "@/lib/settings";
 import { testConnection } from "@/lib/n8n-api";
 import {
   createRequestContext,
@@ -12,7 +12,7 @@ import {
 
 interface SaveConfigRequest {
   apiUrl: string;
-  apiKey: string;
+  apiKey?: string; // Optional - if empty, use existing key
   webhookBaseUrl?: string;
 }
 
@@ -58,22 +58,46 @@ export const Route = createFileRoute("/api/setup/n8n/save-config")({
             return withCorrelationId(response, ctx.correlationId);
           }
 
-          if (!body.apiKey || !body.apiKey.trim()) {
-            const response = Response.json(
-              { error: "n8n API key is required" },
-              { status: 400 }
-            );
-            logRequestComplete(ctx, 400, Date.now() - startTime);
-            return withCorrelationId(response, ctx.correlationId);
-          }
-
           // Normalize URLs
           const apiUrl = body.apiUrl.trim().replace(/\/+$/, "");
           const webhookBaseUrl = body.webhookBaseUrl?.trim().replace(/\/+$/, "") || apiUrl;
 
+          // Determine which API key to use
+          let apiKeyToUse: string;
+
+          if (body.apiKey && body.apiKey.trim()) {
+            // User provided a new API key
+            apiKeyToUse = body.apiKey.trim();
+          } else {
+            // No new API key provided - check if n8n is already configured
+            const alreadyConfigured = await isN8nConfigured();
+            if (!alreadyConfigured) {
+              // First time setup - API key is required
+              const response = Response.json(
+                { error: "n8n API key is required for initial configuration" },
+                { status: 400 }
+              );
+              logRequestComplete(ctx, 400, Date.now() - startTime);
+              return withCorrelationId(response, ctx.correlationId);
+            }
+
+            // Use existing API key from database
+            const existingConfig = await getN8nConfig();
+            if (!existingConfig?.apiKey) {
+              const response = Response.json(
+                { error: "Unable to retrieve existing API key. Please provide a new one." },
+                { status: 400 }
+              );
+              logRequestComplete(ctx, 400, Date.now() - startTime);
+              return withCorrelationId(response, ctx.correlationId);
+            }
+            apiKeyToUse = existingConfig.apiKey;
+            log.info("Using existing API key (not provided in request)");
+          }
+
           // Verify the connection works before saving
           log.info("Verifying n8n connection before saving", { apiUrl });
-          const connectionTest = await testConnection(apiUrl, body.apiKey.trim());
+          const connectionTest = await testConnection(apiUrl, apiKeyToUse);
 
           if (!connectionTest.success) {
             const response = Response.json(
@@ -90,7 +114,7 @@ export const Route = createFileRoute("/api/setup/n8n/save-config")({
           // Save the configuration
           await saveN8nConfig({
             apiUrl,
-            apiKey: body.apiKey.trim(),
+            apiKey: apiKeyToUse,
             webhookBaseUrl,
             updatedBy: session.user.id,
           });
