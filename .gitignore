@@ -49,3 +49,10 @@ frontend/.output/
 # TanStack Router auto-generated files
 frontend/app/routeTree.gen.ts
 frontend/app.config.timestamp_*.js
+
+# Context management (keep structure, ignore transient contents)
+.context/mcp/*
+!.context/mcp/.gitkeep
+.context/terminal/*
+!.context/terminal/.gitkeep
+.context/history/*.log

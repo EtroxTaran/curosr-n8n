@@ -5,18 +5,33 @@
  * Automatically checks for and creates missing Better-Auth tables.
  * Runs on container startup before the main application.
  *
- * Usage: node scripts/db-migrate.mjs
+ * Usage: node scripts/db-migrate.mjs [--validate-only]
+ *
+ * Options:
+ *   --validate-only  Only validate schema, don't run migrations
  *
  * Environment:
  *   DATABASE_URL - PostgreSQL connection string (required)
+ *                  MUST point to 'dashboard' database, NOT 'n8n' database
  */
 
 import pg from 'pg';
 
 const { Pool } = pg;
 
+// Command line flags
+const VALIDATE_ONLY = process.argv.includes('--validate-only');
+
 // Better-Auth required tables
 const BETTER_AUTH_TABLES = ['user', 'session', 'account', 'verification'];
+
+// n8n-specific tables that should NOT exist in dashboard database
+const N8N_SPECIFIC_TABLES = [
+  'execution_entity',
+  'workflow_entity',
+  'webhook_entity',
+  'credentials_entity',
+];
 
 // SQL to create Better-Auth tables
 const MIGRATION_SQL = `
@@ -103,6 +118,100 @@ async function checkMissingTables(pool) {
 }
 
 /**
+ * Get current database name
+ */
+async function getCurrentDatabase(pool) {
+  const result = await pool.query('SELECT current_database()');
+  return result.rows[0]?.current_database || 'unknown';
+}
+
+/**
+ * Check if any n8n-specific tables exist (indicates wrong database)
+ */
+async function checkForN8nTables(pool) {
+  const query = `
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+    AND table_name = ANY($1)
+  `;
+
+  const result = await pool.query(query, [N8N_SPECIFIC_TABLES]);
+  return result.rows.map(row => row.table_name);
+}
+
+/**
+ * Get column type for a specific table and column
+ */
+async function getColumnType(pool, tableName, columnName) {
+  const result = await pool.query(`
+    SELECT data_type
+    FROM information_schema.columns
+    WHERE table_name = $1 AND column_name = $2
+  `, [tableName, columnName]);
+
+  return result.rows[0]?.data_type || null;
+}
+
+/**
+ * Validate that we're connected to the correct database (dashboard, not n8n)
+ * and that existing user table (if any) has compatible schema
+ */
+async function validateDatabaseConfig(pool) {
+  const currentDb = await getCurrentDatabase(pool);
+  const errors = [];
+  const warnings = [];
+
+  // Check 1: Warn if not connected to 'dashboard' database
+  if (currentDb !== 'dashboard') {
+    warnings.push(
+      `Connected to database '${currentDb}' instead of 'dashboard'.` +
+      `\n   → Ensure DATABASE_URL points to: postgresql://<user>:<pass>@host:5432/dashboard`
+    );
+  }
+
+  // Check 2: Error if n8n-specific tables exist (definitely wrong database)
+  const n8nTables = await checkForN8nTables(pool);
+  if (n8nTables.length > 0) {
+    errors.push(
+      `❌ CRITICAL: Found n8n-specific tables: ${n8nTables.join(', ')}` +
+      `\n   → DATABASE_URL is pointing to n8n's database, NOT the dashboard database.` +
+      `\n   → This will cause foreign key constraint failures.` +
+      `\n` +
+      `\n   FIX: Change DATABASE_URL to point to 'dashboard' database:` +
+      `\n        postgresql://<user>:<pass>@postgres:5432/dashboard` +
+      `\n` +
+      `\n   The 'dashboard' database is created by init-scripts/00-aaa-create-databases.sql`
+    );
+  }
+
+  // Check 3: If user table exists, verify it has TEXT id (not UUID)
+  const userIdType = await getColumnType(pool, 'user', 'id');
+  if (userIdType) {
+    if (userIdType === 'uuid') {
+      errors.push(
+        `❌ CRITICAL: user.id column has type 'uuid' (expected 'text')` +
+        `\n   → This is likely n8n's user table, not Better-Auth's user table.` +
+        `\n   → DATABASE_URL is pointing to the wrong database.` +
+        `\n` +
+        `\n   FIX: Change DATABASE_URL to point to 'dashboard' database:` +
+        `\n        postgresql://<user>:<pass>@postgres:5432/dashboard` +
+        `\n` +
+        `\n   Current database: ${currentDb}` +
+        `\n   Expected database: dashboard`
+      );
+    } else if (userIdType !== 'text' && userIdType !== 'character varying') {
+      errors.push(
+        `❌ user.id column has unexpected type '${userIdType}' (expected 'text')` +
+        `\n   → Better-Auth requires user.id to be TEXT type.`
+      );
+    }
+  }
+
+  return { errors, warnings, currentDb };
+}
+
+/**
  * Run database migrations
  */
 async function runMigrations() {
@@ -116,6 +225,12 @@ async function runMigrations() {
   console.log('🔄 Database Migration Check');
   console.log('━'.repeat(50));
 
+  // Warn if DATABASE_URL doesn't end with /dashboard
+  if (!databaseUrl.includes('/dashboard')) {
+    console.log('⚠️  Warning: DATABASE_URL may not point to dashboard database');
+    console.log('   Expected: postgresql://<user>:<pass>@host:5432/dashboard');
+  }
+
   const pool = new Pool({ connectionString: databaseUrl });
 
   try {
@@ -123,6 +238,39 @@ async function runMigrations() {
     console.log('📡 Connecting to database...');
     await pool.query('SELECT 1');
     console.log('✅ Database connection successful');
+
+    // Validate database configuration BEFORE running migrations
+    console.log('\n🔍 Validating database configuration...');
+    const { errors, warnings, currentDb } = await validateDatabaseConfig(pool);
+
+    console.log(`   Current database: ${currentDb}`);
+
+    // Show warnings
+    for (const warning of warnings) {
+      console.log(`\n⚠️  ${warning}`);
+    }
+
+    // If there are errors, stop immediately
+    if (errors.length > 0) {
+      console.log('\n' + '═'.repeat(60));
+      console.log('DATABASE CONFIGURATION ERRORS DETECTED');
+      console.log('═'.repeat(60));
+      for (const error of errors) {
+        console.log(`\n${error}`);
+      }
+      console.log('\n' + '═'.repeat(60));
+      console.log('Migration aborted due to configuration errors.');
+      console.log('═'.repeat(60));
+      process.exit(1);
+    }
+
+    // If validate-only mode, stop here
+    if (VALIDATE_ONLY) {
+      console.log('\n✅ Database configuration validation passed');
+      console.log('   (--validate-only mode, skipping migrations)');
+      console.log('━'.repeat(50));
+      return;
+    }
 
     // Check for missing tables
     console.log('\n🔍 Checking for Better-Auth tables...');
@@ -169,6 +317,14 @@ async function runMigrations() {
     } else if (error.code === '3D000') {
       console.error('   → Database does not exist');
       console.error('   → Make sure the database has been created');
+      console.error('   → The dashboard database should be created by:');
+      console.error('     init-scripts/00-aaa-create-databases.sql');
+    } else if (error.message.includes('foreign key constraint')) {
+      console.error('\n   → FOREIGN KEY CONSTRAINT ERROR');
+      console.error('   → This usually means DATABASE_URL points to the wrong database.');
+      console.error('   → n8n uses UUID for user.id, Better-Auth uses TEXT.');
+      console.error('\n   FIX: Change DATABASE_URL to point to dashboard database:');
+      console.error('        postgresql://<user>:<pass>@postgres:5432/dashboard');
     }
 
     process.exit(1);

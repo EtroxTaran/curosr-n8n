@@ -1,0 +1,48 @@
+# Claude Code Context Exclusions
+# These files/directories are excluded from Claude's context processing
+
+# Dependencies
+node_modules/
+.pnpm-store/
+vendor/
+
+# Build outputs
+dist/
+build/
+.next/
+.vinxi/
+.output/
+
+# Large data files
+*.log
+*.sql.gz
+*.tar.gz
+*.zip
+
+# Test artifacts
+coverage/
+.nyc_output/
+
+# Context folder contents (managed separately - reference via files)
+.context/mcp/
+.context/terminal/
+
+# IDE and system files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docker volumes and caches
+postgres_data/
+redis_data/
+qdrant_data/
+seaweedfs_data/
+
+# Large workflow artifacts
+workflows/iterations/
+
+# Package manager caches
+.npm/
+.yarn/
