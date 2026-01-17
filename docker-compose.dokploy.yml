@@ -226,6 +226,8 @@ services:
       - AUTH_SECRET=${AUTH_SECRET}
       - AUTH_URL=https://${DASHBOARD_DOMAIN}
       - ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS:-}
+      # Workflow import configuration
+      - WORKFLOWS_DIR=/workflows
     depends_on:
       postgres:
         condition: service_healthy

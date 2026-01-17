@@ -1,6 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { getServerSession } from "@/lib/auth";
-import { getWorkflowStatus } from "@/lib/workflow-importer";
+import {
+  getWorkflowStatus,
+  validateWorkflowsDirectory,
+} from "@/lib/workflow-importer";
 import {
   createRequestContext,
   logRequestStart,
@@ -37,12 +40,23 @@ export const Route = createFileRoute("/api/setup/workflows/list")({
             return withCorrelationId(response, ctx.correlationId);
           }
 
+          // Validate workflows directory first
+          const validation = await validateWorkflowsDirectory();
+          if (!validation.valid) {
+            log.warn("Workflows directory not accessible", {
+              workflowsDir: validation.workflowsDir,
+              error: validation.error,
+            });
+          }
+
           // Get workflow status
           const workflows = await getWorkflowStatus();
 
           log.info("Workflow list retrieved", {
             count: workflows.length,
-            imported: workflows.filter((w) => w.importStatus === "imported").length,
+            imported: workflows.filter((w) => w.importStatus === "imported")
+              .length,
+            directoryValid: validation.valid,
           });
 
           const response = Response.json({
@@ -58,6 +72,16 @@ export const Route = createFileRoute("/api/setup/workflows/list")({
               lastImportAt: w.lastImportAt?.toISOString() || null,
               lastError: w.lastError,
             })),
+            // Include diagnostic info if directory is not accessible
+            ...(validation.valid
+              ? {}
+              : {
+                  diagnostics: {
+                    workflowsDir: validation.workflowsDir,
+                    error: validation.error,
+                    hint: "Ensure WORKFLOWS_DIR=/workflows is set in environment",
+                  },
+                }),
           });
 
           logRequestComplete(ctx, 200, Date.now() - startTime);

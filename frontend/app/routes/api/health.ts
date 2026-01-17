@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { healthCheck } from "@/lib/db";
+import { validateWorkflowsDirectory } from "@/lib/workflow-importer";
 import {
   createRequestContext,
   logRequestComplete,
@@ -23,6 +24,15 @@ export const Route = createFileRoute("/api/health")({
             error: error instanceof Error ? error.message : "Unknown error",
           });
           dbHealthy = false;
+        }
+
+        // Check workflow directory accessibility
+        const workflowValidation = await validateWorkflowsDirectory();
+        if (!workflowValidation.valid) {
+          log.warn("Workflow directory not accessible", {
+            workflowsDir: workflowValidation.workflowsDir,
+            error: workflowValidation.error,
+          });
         }
 
         const responseTime = Date.now() - startTime;
@@ -50,6 +60,14 @@ export const Route = createFileRoute("/api/health")({
             checks: {
               database: {
                 status: dbHealthy ? "up" : "down",
+              },
+              workflows: {
+                status: workflowValidation.valid ? "up" : "down",
+                directory: workflowValidation.workflowsDir,
+                filesFound: workflowValidation.filesFound,
+                ...(workflowValidation.error
+                  ? { error: workflowValidation.error }
+                  : {}),
               },
             },
             version: process.env.npm_package_version || "1.0.0",

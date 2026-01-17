@@ -261,6 +261,8 @@ services:
       - AUTH_SECRET=${AUTH_SECRET:-test-auth-secret-32-characters!!}
       - AUTH_URL=http://dashboard.localhost
       - ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS:-}
+      # Workflow import configuration
+      - WORKFLOWS_DIR=/workflows
     depends_on:
       postgres:
         condition: service_healthy

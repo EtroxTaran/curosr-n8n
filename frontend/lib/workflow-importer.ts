@@ -173,6 +173,74 @@ function hasCredentialReferences(workflow: WorkflowDefinition): boolean {
 }
 
 // ============================================
+// Workflow Directory Validation
+// ============================================
+
+export interface WorkflowDirectoryValidation {
+  valid: boolean;
+  workflowsDir: string;
+  filesFound: number;
+  error?: string;
+}
+
+/**
+ * Validate that workflow files are accessible.
+ * Call this at application startup or API requests to fail fast if misconfigured.
+ */
+export async function validateWorkflowsDirectory(
+  workflowsDir: string = DEFAULT_WORKFLOWS_DIR
+): Promise<WorkflowDirectoryValidation> {
+  log.debug("Validating workflows directory", {
+    workflowsDir,
+    cwd: process.cwd(),
+    envVar: process.env.WORKFLOWS_DIR || "(not set)",
+  });
+
+  try {
+    await fs.access(workflowsDir);
+    const files = await fs.readdir(workflowsDir);
+    const jsonFiles = files.filter((f) => f.endsWith(".json"));
+
+    if (jsonFiles.length === 0) {
+      log.warn("No workflow JSON files found", { workflowsDir });
+      return {
+        valid: false,
+        workflowsDir,
+        filesFound: 0,
+        error: `No workflow JSON files found in ${workflowsDir}`,
+      };
+    }
+
+    log.info("Workflows directory validated", {
+      workflowsDir,
+      filesFound: jsonFiles.length,
+    });
+
+    return {
+      valid: true,
+      workflowsDir,
+      filesFound: jsonFiles.length,
+    };
+  } catch (error) {
+    const errorMsg =
+      error instanceof Error ? error.message : "Directory not accessible";
+    log.error("Workflows directory validation failed", {
+      workflowsDir,
+      cwd: process.cwd(),
+      envVar: process.env.WORKFLOWS_DIR || "(not set)",
+      error: errorMsg,
+    });
+
+    return {
+      valid: false,
+      workflowsDir,
+      filesFound: 0,
+      error: errorMsg,
+    };
+  }
+}
+
+// ============================================
 // Bundled Workflow Discovery
 // ============================================
 
@@ -187,8 +255,13 @@ export async function getBundledWorkflows(
   try {
     // Check if directory exists
     await fs.access(workflowsDir);
-  } catch {
-    log.warn("Workflows directory not found", { workflowsDir });
+  } catch (error) {
+    log.error("Workflows directory not accessible", {
+      workflowsDir,
+      cwd: process.cwd(),
+      envVar: process.env.WORKFLOWS_DIR || "(not set)",
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 
