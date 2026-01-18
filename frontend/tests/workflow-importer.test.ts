@@ -282,14 +282,20 @@ describe('workflow-importer', () => {
       expect(result.workflow.nodes.some((n: { type: string }) => n.type.includes('webhook'))).toBe(true);
     });
 
-    it('should parse workflow with credentials', async () => {
+    it('should parse workflow with credentials (stripped by default)', async () => {
       mockReadFile.mockResolvedValue(credentialsWorkflowStr);
       mockAccess.mockResolvedValue(undefined);
 
       const result = await readWorkflowFile('credentials.json');
 
+      // Credentials are stripped by default for fresh n8n instance support
       const nodeWithCreds = result.workflow.nodes.find((n: { credentials?: object }) => n.credentials);
-      expect(nodeWithCreds).toBeDefined();
+      expect(nodeWithCreds).toBeUndefined();
+
+      // Original fixture should have credentials (verify test data is correct)
+      const originalData = JSON.parse(credentialsWorkflowStr);
+      const originalNodeWithCreds = originalData.nodes.find((n: { credentials?: object }) => n.credentials);
+      expect(originalNodeWithCreds).toBeDefined();
     });
   });
 
@@ -338,32 +344,44 @@ describe('workflow-importer', () => {
   });
 
   // ============================================
-  // detectCredentials Tests
+  // detectCredentials Tests (Raw Fixture Inspection)
   // ============================================
+  // Note: These tests verify the fixture data contains credentials.
+  // After readWorkflowFile, credentials are stripped by default.
+  // Use getBundledWorkflows to see which workflows need credential config.
 
-  describe('detectCredentials (via workflow inspection)', () => {
-    it('should detect OpenAI credentials', async () => {
-      mockReadFile.mockResolvedValue(credentialsWorkflowStr);
-      mockAccess.mockResolvedValue(undefined);
+  describe('detectCredentials (raw fixture inspection)', () => {
+    it('should have OpenAI credentials in fixture', () => {
+      // Verify fixture has credentials (used for getBundledWorkflows display)
+      const originalData = JSON.parse(credentialsWorkflowStr);
 
-      const result = await readWorkflowFile('credentials.json');
-
-      const openAiNode = result.workflow.nodes.find(
+      const openAiNode = originalData.nodes.find(
         (n: { credentials?: { openAiApi?: object } }) => n.credentials?.openAiApi
       );
       expect(openAiNode).toBeDefined();
     });
 
-    it('should detect HTTP Header Auth credentials', async () => {
+    it('should have HTTP Header Auth credentials in fixture', () => {
+      // Verify fixture has credentials (used for getBundledWorkflows display)
+      const originalData = JSON.parse(credentialsWorkflowStr);
+
+      const httpNode = originalData.nodes.find(
+        (n: { credentials?: { httpHeaderAuth?: object } }) => n.credentials?.httpHeaderAuth
+      );
+      expect(httpNode).toBeDefined();
+    });
+
+    it('should strip credentials when parsed via readWorkflowFile', async () => {
       mockReadFile.mockResolvedValue(credentialsWorkflowStr);
       mockAccess.mockResolvedValue(undefined);
 
       const result = await readWorkflowFile('credentials.json');
 
-      const httpNode = result.workflow.nodes.find(
-        (n: { credentials?: { httpHeaderAuth?: object } }) => n.credentials?.httpHeaderAuth
+      // All credentials should be stripped
+      const nodesWithCreds = result.workflow.nodes.filter(
+        (n: { credentials?: object }) => n.credentials && Object.keys(n.credentials).length > 0
       );
-      expect(httpNode).toBeDefined();
+      expect(nodesWithCreds).toHaveLength(0);
     });
 
     it('should return empty for workflow without credentials', async () => {
@@ -847,6 +865,194 @@ describe('workflow-importer', () => {
 
       expect(mockExtractWebhookPaths).toHaveBeenCalled();
       expect(result.webhookPaths).toEqual(['/webhook/test', '/webhook-test/form']);
+    });
+  });
+
+  // ============================================
+  // Credential Stripping Tests (Fresh Instance Support)
+  // ============================================
+  // These tests verify that workflows can be imported to fresh n8n instances
+  // where credential IDs from the source instance don't exist.
+  // Issue: n8n returns 400 Bad Request when referencing non-existent credentials.
+
+  describe('credential stripping for fresh instances', () => {
+    it('should strip credentials from workflow nodes by default', async () => {
+      mockReadFile.mockResolvedValue(credentialsWorkflowStr);
+      mockAccess.mockResolvedValue(undefined);
+
+      const result = await readWorkflowFile('credentials.json');
+
+      // Credentials should be stripped by default
+      const nodesWithCreds = result.workflow.nodes.filter(
+        (n: { credentials?: object }) => n.credentials && Object.keys(n.credentials).length > 0
+      );
+      expect(nodesWithCreds).toHaveLength(0);
+    });
+
+    it('should preserve credentials in raw fixture for display purposes', () => {
+      // getBundledWorkflows uses stripCredentials: false internally
+      // to show which workflows need credential configuration in the UI.
+      // This test verifies the fixture has credentials that would be shown.
+      const originalData = JSON.parse(credentialsWorkflowStr);
+
+      // Count nodes with credentials
+      const nodesWithCreds = originalData.nodes.filter(
+        (n: { credentials?: object }) => n.credentials && Object.keys(n.credentials).length > 0
+      );
+
+      // The fixture should have 2 nodes with credentials (OpenAI and HTTP)
+      expect(nodesWithCreds.length).toBe(2);
+    });
+
+    it('should successfully import workflow after stripping credentials', async () => {
+      mockQueryOne.mockResolvedValue(null);
+      mockReadFile.mockResolvedValue(credentialsWorkflowStr);
+      mockAccess.mockResolvedValue(undefined);
+      mockFindWorkflowByName.mockResolvedValue(null);
+
+      // Capture what's sent to n8n
+      let capturedWorkflow: { nodes?: Array<{ credentials?: object }> } | null = null;
+      mockCreateWorkflow.mockImplementation((workflow) => {
+        capturedWorkflow = workflow;
+        return Promise.resolve({ ...mockWorkflowResponse, id: 'wf-new-123', name: workflow.name });
+      });
+
+      await importWorkflow('credentials.json', { configOverride: mockN8nConfig });
+
+      // Verify credentials were stripped before sending to n8n
+      expect(capturedWorkflow).not.toBeNull();
+      const nodesWithCreds = capturedWorkflow!.nodes?.filter(
+        (n) => n.credentials && Object.keys(n.credentials).length > 0
+      );
+      expect(nodesWithCreds).toHaveLength(0);
+    });
+
+    it('should log stripped credentials for debugging', async () => {
+      mockQueryOne.mockResolvedValue(null);
+      mockReadFile.mockResolvedValue(credentialsWorkflowStr);
+      mockAccess.mockResolvedValue(undefined);
+      mockFindWorkflowByName.mockResolvedValue(null);
+
+      await importWorkflow('credentials.json', { configOverride: mockN8nConfig });
+
+      // Verify that stripping was logged
+      expect(mockLogInfo).toHaveBeenCalledWith(
+        'Stripped credentials from workflow nodes',
+        expect.objectContaining({
+          count: expect.any(Number),
+          credentials: expect.any(Array),
+        })
+      );
+    });
+  });
+
+  // ============================================
+  // Import Failure Handling Tests (Catch Block)
+  // ============================================
+  // These tests verify that when import fails, the catch block properly:
+  // 1. Sets workflow_name in database (not NULL)
+  // 2. Extracts detailed error messages from n8n responses
+  // Issue: Variables declared inside try block were inaccessible in catch.
+
+  describe('import failure handling', () => {
+    it('should set workflow_name in database even when import fails', async () => {
+      mockQueryOne.mockResolvedValue(null);
+      mockReadFile.mockResolvedValue(simpleWorkflowStr);
+      mockAccess.mockResolvedValue(undefined);
+      mockFindWorkflowByName.mockResolvedValue(null);
+      mockCreateWorkflow.mockRejectedValue(new Error('n8n API error'));
+
+      await importWorkflow('test-simple.json', { configOverride: mockN8nConfig });
+
+      // Verify upsert was called with workflow_name (not NULL)
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO workflow_registry'),
+        expect.arrayContaining([
+          'test-simple.json', // workflow_file
+          'Test Simple Workflow', // workflow_name - should NOT be null
+        ])
+      );
+    });
+
+    it('should use filename as fallback when workflow parsing fails', async () => {
+      mockQueryOne.mockResolvedValue(null);
+      // Return invalid JSON that will fail to parse
+      mockReadFile.mockResolvedValue('{ invalid json }');
+      mockAccess.mockResolvedValue(undefined);
+
+      const result = await importWorkflow('my-workflow.json', { configOverride: mockN8nConfig });
+
+      expect(result.status).toBe('failed');
+      // The workflow_name should fallback to filename without .json extension
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO workflow_registry'),
+        expect.arrayContaining([
+          'my-workflow.json', // workflow_file
+          'my-workflow', // workflow_name fallback from filename
+        ])
+      );
+    });
+
+    it('should extract detailed error from n8n 400 response', async () => {
+      mockQueryOne.mockResolvedValue(null);
+      mockReadFile.mockResolvedValue(simpleWorkflowStr);
+      mockAccess.mockResolvedValue(undefined);
+      mockFindWorkflowByName.mockResolvedValue(null);
+
+      // Simulate n8n 400 error with response body
+      const n8nError = new Error('n8n API error: 400 Bad Request') as Error & {
+        statusCode?: number;
+        response?: object;
+      };
+      n8nError.statusCode = 400;
+      n8nError.response = {
+        message: 'Credential with ID "cred-123" does not exist',
+        error: 'Bad Request',
+      };
+      mockCreateWorkflow.mockRejectedValue(n8nError);
+
+      const result = await importWorkflow('test.json', { configOverride: mockN8nConfig });
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('400');
+      expect(result.error).toContain('Credential with ID');
+    });
+
+    it('should handle n8n error without response body', async () => {
+      mockQueryOne.mockResolvedValue(null);
+      mockReadFile.mockResolvedValue(simpleWorkflowStr);
+      mockAccess.mockResolvedValue(undefined);
+      mockFindWorkflowByName.mockResolvedValue(null);
+
+      mockCreateWorkflow.mockRejectedValue(new Error('Network error'));
+
+      const result = await importWorkflow('test.json', { configOverride: mockN8nConfig });
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe('Network error');
+    });
+
+    it('should increment retry_count on repeated failures', async () => {
+      // First call: no existing entry
+      mockQueryOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ retry_count: 1 }); // Second call: has retry_count
+
+      mockReadFile.mockResolvedValue(simpleWorkflowStr);
+      mockAccess.mockResolvedValue(undefined);
+      mockFindWorkflowByName.mockResolvedValue(null);
+      mockCreateWorkflow.mockRejectedValue(new Error('Persistent failure'));
+
+      // First attempt
+      await importWorkflow('test.json', { configOverride: mockN8nConfig });
+
+      // Reset and do second attempt
+      mockQueryOne.mockResolvedValue({ retry_count: 1 });
+      await importWorkflow('test.json', { configOverride: mockN8nConfig });
+
+      // Verify retry_count was incremented
+      const lastCall = mockExecute.mock.calls[mockExecute.mock.calls.length - 1];
+      expect(lastCall[1]).toContain(2); // retry_count should be 2
     });
   });
 });

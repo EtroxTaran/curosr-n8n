@@ -3236,6 +3236,114 @@ await waitFor(() => {
 });
 ```
 
+### Testing Best Practices
+
+This section documents testing requirements for all code changes. **Every feature and fix must have corresponding tests.**
+
+#### Critical Testing Requirements
+
+| Scenario | Test Type | Why It Matters |
+|----------|-----------|----------------|
+| **Fresh instance deployment** | Integration | Catches credential/migration issues that don't appear in warm environments |
+| **Failure/catch paths** | Unit | Variables may be inaccessible in catch blocks; error messages may not extract properly |
+| **Database constraints** | Unit | NULL constraints and foreign keys may fail silently in mocks |
+| **External API errors** | Unit | APIs return structured errors (400, 401, 500) that need proper extraction |
+| **Environment differences** | E2E | Local dev has state that production won't have |
+
+#### Test Categories Checklist
+
+When adding or modifying code, ensure these test categories are covered:
+
+```markdown
+## Pre-Commit Testing Checklist
+
+### Happy Path Tests
+- [ ] Feature works with valid input
+- [ ] Database records created/updated correctly
+- [ ] API responses match expected schema
+
+### Failure Path Tests (CRITICAL)
+- [ ] Invalid input returns proper error
+- [ ] External API failures are handled gracefully
+- [ ] Catch blocks have access to required variables
+- [ ] Error messages are human-readable (not [object Object])
+- [ ] Database upserts use fallback values for required fields
+
+### Fresh Instance Tests
+- [ ] Feature works without pre-existing credentials
+- [ ] Feature works without pre-existing database records
+- [ ] Migrations run correctly on empty database
+- [ ] No hardcoded IDs that won't exist in production
+
+### Edge Cases
+- [ ] Empty input handled
+- [ ] Large input handled
+- [ ] Concurrent requests handled
+- [ ] Retry logic works correctly
+```
+
+#### Lessons Learned (2026-01-18)
+
+**Issue**: Workflow imports failed on fresh Dokploy deployment but worked locally.
+
+**Root Causes**:
+1. **Credential references**: Workflows contained credential IDs from source n8n instance that didn't exist on fresh instance → n8n returned 400
+2. **Variable scoping**: `workflow.name` declared inside `try` block was inaccessible in `catch` block → NULL constraint violation
+3. **Error logging**: `[object Object]` logged instead of actual error message → Debugging was difficult
+
+**Solution**: Added tests for:
+- Credential stripping before import
+- Catch block variable accessibility
+- Error message extraction from API responses
+
+**Test Example** (catch block variable accessibility):
+```typescript
+it('should set workflow_name in database even when import fails', async () => {
+  mockCreateWorkflow.mockRejectedValue(new Error('n8n API error'));
+
+  await importWorkflow('test.json', { configOverride: mockN8nConfig });
+
+  // Verify upsert was called with workflow_name (not NULL)
+  expect(mockExecute).toHaveBeenCalledWith(
+    expect.stringContaining('INSERT INTO workflow_registry'),
+    expect.arrayContaining([
+      'test.json',           // workflow_file
+      'Test Workflow',       // workflow_name - should NOT be null
+    ])
+  );
+});
+```
+
+**Test Example** (credential stripping):
+```typescript
+it('should strip credentials from workflow nodes by default', async () => {
+  mockReadFile.mockResolvedValue(credentialsWorkflowStr);
+
+  const result = await readWorkflowFile('credentials.json');
+
+  // Credentials should be stripped by default
+  const nodesWithCreds = result.workflow.nodes.filter(
+    (n) => n.credentials && Object.keys(n.credentials).length > 0
+  );
+  expect(nodesWithCreds).toHaveLength(0);
+});
+```
+
+#### Writing Effective Tests
+
+**DO:**
+- Test failure paths with mocked errors
+- Verify database calls include all required fields
+- Use `expect.arrayContaining()` to verify specific values in DB upserts
+- Test with realistic error objects (statusCode, response body)
+- Add comments explaining what bug the test prevents
+
+**DON'T:**
+- Assume "warm" environment state exists
+- Only test happy paths
+- Skip testing catch blocks because "they rarely run"
+- Use generic error assertions like `expect(result.error).toBeDefined()`
+
 ### Adding New Tests
 
 #### Backend Integration Test
