@@ -46,6 +46,11 @@ nul
 frontend/dist/
 frontend/.output/
 
+# Playwright test artifacts
+frontend/playwright-report/
+frontend/test-results/
+.playwright-mcp/
+
 # TanStack Router auto-generated files
 frontend/app/routeTree.gen.ts
 frontend/app.config.timestamp_*.js

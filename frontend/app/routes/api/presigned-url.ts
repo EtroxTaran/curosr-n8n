@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { generateUploadUrl, getContentType } from "@/lib/s3";
+import { getServerSession } from "@/lib/auth";
 import { PresignedUrlRequestSchema } from "@/lib/schemas";
 import {
   createRequestContext,
@@ -18,6 +19,17 @@ export const Route = createFileRoute("/api/presigned-url")({
         const log = ctx.logger.child({ operation: "presigned-url" });
 
         logRequestStart(ctx);
+
+        // Check authentication
+        const session = await getServerSession(request.headers);
+        if (!session?.user) {
+          const response = Response.json(
+            { error: "Authentication required" },
+            { status: 401 }
+          );
+          logRequestComplete(ctx, 401, Date.now() - startTime);
+          return withCorrelationId(response, ctx.correlationId);
+        }
 
         try {
           const body = await request.json();

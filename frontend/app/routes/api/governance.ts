@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { GovernanceResponseSchema } from "@/lib/schemas";
 import { fetchWithRetry, type RetryOptions } from "@/lib/n8n";
+import { getServerSession } from "@/lib/auth";
 import {
   createRequestContext,
   logRequestStart,
@@ -18,6 +19,17 @@ export const Route = createFileRoute("/api/governance")({
         const log = ctx.logger.child({ operation: "governance-submit" });
 
         logRequestStart(ctx);
+
+        // Check authentication
+        const session = await getServerSession(request.headers);
+        if (!session?.user) {
+          const response = Response.json(
+            { error: "Authentication required" },
+            { status: 401 }
+          );
+          logRequestComplete(ctx, 401, Date.now() - startTime);
+          return withCorrelationId(response, ctx.correlationId);
+        }
 
         try {
           const body = await request.json();

@@ -15,8 +15,12 @@ import {
 } from "@/components/setup";
 import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
 import { RouteLoadingSpinner } from "@/components/loading/RouteLoadingSpinner";
+import { requireAuth } from "@/lib/auth-guard";
 
 export const Route = createFileRoute("/setup/")({
+  beforeLoad: async ({ location }) => {
+    return requireAuth(location);
+  },
   component: SetupWizardPage,
   errorComponent: RouteErrorBoundary,
   pendingComponent: RouteLoadingSpinner,

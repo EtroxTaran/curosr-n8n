@@ -4,8 +4,12 @@ import { Button } from "@/components/ui/button";
 import { ChevronRight, Server, Workflow, RefreshCw } from "lucide-react";
 import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
 import { RouteLoadingSpinner } from "@/components/loading/RouteLoadingSpinner";
+import { requireAuth } from "@/lib/auth-guard";
 
 export const Route = createFileRoute("/settings/")({
+  beforeLoad: async ({ location }) => {
+    return requireAuth(location);
+  },
   component: SettingsPage,
   errorComponent: RouteErrorBoundary,
   pendingComponent: RouteLoadingSpinner,

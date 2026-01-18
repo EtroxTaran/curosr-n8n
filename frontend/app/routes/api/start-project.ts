@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { query } from "@/lib/db";
 import { triggerStartProject } from "@/lib/n8n";
+import { getServerSession } from "@/lib/auth";
 import type { InputFile } from "@/lib/schemas";
 import {
   createRequestContext,
@@ -38,6 +39,17 @@ export const Route = createFileRoute("/api/start-project")({
         const log = ctx.logger.child({ operation: "start-project" });
 
         logRequestStart(ctx);
+
+        // Check authentication
+        const session = await getServerSession(request.headers);
+        if (!session?.user) {
+          const response = Response.json(
+            { error: "Authentication required" },
+            { status: 401 }
+          );
+          logRequestComplete(ctx, 401, Date.now() - startTime);
+          return withCorrelationId(response, ctx.correlationId);
+        }
 
         try {
           const body = (await request.json()) as StartProjectRequest;

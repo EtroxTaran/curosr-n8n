@@ -19,8 +19,12 @@ import {
 } from "lucide-react";
 import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
 import { RouteLoadingSpinner } from "@/components/loading/RouteLoadingSpinner";
+import { requireAuth } from "@/lib/auth-guard";
 
 export const Route = createFileRoute("/settings/workflows")({
+  beforeLoad: async ({ location }) => {
+    return requireAuth(location);
+  },
   component: WorkflowsSettingsPage,
   errorComponent: RouteErrorBoundary,
   pendingComponent: RouteLoadingSpinner,
