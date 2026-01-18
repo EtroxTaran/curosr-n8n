@@ -436,6 +436,57 @@ async function upsertWorkflowEntry(
 }
 
 // ============================================
+// Recovery Operations
+// ============================================
+
+/**
+ * Reset stuck imports back to pending state.
+ *
+ * This handles the case where the container was restarted during an import,
+ * leaving workflows stuck in "importing" or "updating" status forever.
+ *
+ * Called automatically on startup to recover from interrupted imports.
+ *
+ * @returns Number of workflows reset
+ */
+export async function resetStuckImports(): Promise<number> {
+  try {
+    const result = await execute(
+      `UPDATE workflow_registry
+       SET import_status = 'pending',
+           last_error = 'Reset: Previous import was interrupted',
+           updated_at = NOW()
+       WHERE import_status IN ('importing', 'updating')
+       RETURNING workflow_file`
+    );
+
+    const resetCount = result.rowCount ?? 0;
+
+    if (resetCount > 0) {
+      log.warn("Reset stuck workflow imports", {
+        count: resetCount,
+        reason: "Previous import was interrupted (container restart or timeout)",
+      });
+    } else {
+      log.debug("No stuck imports to reset");
+    }
+
+    return resetCount;
+  } catch (error) {
+    // Table might not exist yet on fresh install - that's OK
+    if (
+      error instanceof Error &&
+      error.message.includes("relation \"workflow_registry\" does not exist")
+    ) {
+      log.debug("workflow_registry table does not exist yet, skipping reset");
+      return 0;
+    }
+    log.error("Failed to reset stuck imports", { error });
+    throw error;
+  }
+}
+
+// ============================================
 // Import Operations
 // ============================================
 

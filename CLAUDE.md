@@ -334,8 +334,17 @@ Database migrations run **automatically** on deployment via an init container pa
 |------|---------|
 | `frontend/Dockerfile.migrate` | Lightweight migration container |
 | `frontend/scripts/db-migrate.mjs` | Migration script (idempotent) |
+| `frontend/scripts/startup-recovery.mjs` | Resets stuck imports on startup |
 | `frontend/docker-entrypoint.sh` | Startup script with `SKIP_MIGRATIONS` support |
 | `init-scripts/00-aaa-create-databases.sql` | Creates `dashboard` database |
+
+### Auto-Recovery
+
+On every container startup, the system automatically:
+1. **Resets stuck imports**: Workflows stuck in "importing"/"updating" status are reset to "pending"
+2. **Logs recovery actions**: Any recovered workflows are logged for visibility
+
+This handles the case where the container was restarted during a workflow import, preventing workflows from being stuck forever.
 
 ### Adding New Migrations
 
