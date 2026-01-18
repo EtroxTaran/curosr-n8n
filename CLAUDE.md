@@ -240,16 +240,19 @@ competitive_analysis → Competitor intelligence
 
 ### Editing Workflows
 
-**IMPORTANT**: After editing any workflow JSON file, you MUST validate the changes:
+**Pre-commit Hook**: Workflow validation runs automatically when you commit changes to `workflows/*.json`. The hook will block commits if validation fails.
 
 ```bash
-# Quick validation (unit tests only - no n8n required)
-npm run test:workflows
+# Manual validation (if needed)
+npm run test:workflows              # Quick validation (no n8n required)
 
-# Full validation with n8n import test (requires test environment)
+# Full validation with n8n import test
 npm run test:env:up
 N8N_API_KEY=<your-key> npm run test:workflows
 npm run test:env:down
+
+# Skip pre-commit hook (emergency only)
+git commit --no-verify -m "message"
 ```
 
 **What the tests validate:**

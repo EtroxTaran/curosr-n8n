@@ -1,0 +1,56 @@
+#!/bin/sh
+
+# Pre-commit hook for AI Product Factory
+# Validates workflow files and runs linting on staged changes
+
+echo "🔍 Running pre-commit checks..."
+
+# Check if any workflow JSON files are staged
+WORKFLOW_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^workflows/.*\.json$' || true)
+
+if [ -n "$WORKFLOW_FILES" ]; then
+    echo ""
+    echo "📋 Workflow files changed:"
+    echo "$WORKFLOW_FILES" | sed 's/^/   /'
+    echo ""
+    echo "🧪 Validating workflow files..."
+
+    # Run workflow validation tests (unit tests only, no n8n required)
+    npm run test:workflows
+
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ Workflow validation failed!"
+        echo "   Fix the issues above before committing."
+        echo ""
+        echo "   Run: npm run test:workflows"
+        echo "   For details on what's checked, see: tests/workflow-import.test.ts"
+        exit 1
+    fi
+
+    echo "✅ Workflow validation passed"
+fi
+
+# Check if any frontend files are staged
+FRONTEND_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^frontend/.*\.(ts|tsx|js|jsx)$' || true)
+
+if [ -n "$FRONTEND_FILES" ]; then
+    echo ""
+    echo "🔧 Running TypeScript check on frontend..."
+
+    cd frontend
+    npm run typecheck 2>/dev/null
+
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ TypeScript check failed!"
+        echo "   Fix type errors before committing."
+        exit 1
+    fi
+
+    echo "✅ TypeScript check passed"
+    cd ..
+fi
+
+echo ""
+echo "✅ Pre-commit checks passed"
