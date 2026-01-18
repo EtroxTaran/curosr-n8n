@@ -804,9 +804,10 @@ export async function importAllWorkflows(
 
     try {
       // Use retry logic for activation to handle publish timing
+      // n8n needs time to fully "publish" subworkflows before parent workflows can reference them
       await activateWorkflowWithRetry(created.workflowId, config, {
-        maxRetries: 3,
-        initialDelayMs: 1000,
+        maxRetries: 5,
+        initialDelayMs: 2000,
       });
 
       // Update registry with activation success
@@ -834,8 +835,9 @@ export async function importAllWorkflows(
       progress.completed++;
       onProgress?.(progress);
 
-      // Brief delay between activations to let n8n register each workflow
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Wait for n8n to fully publish the workflow before activating the next one
+      // This is critical for subworkflows that are referenced by parent workflows
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);

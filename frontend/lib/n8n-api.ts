@@ -261,6 +261,15 @@ export async function getWorkflow(
 }
 
 /**
+ * Strip read-only fields from workflow before sending to n8n API.
+ * The tags field is read-only and will cause a 400 error if included.
+ */
+function stripReadOnlyFields(workflow: WorkflowDefinition | Partial<WorkflowDefinition>): Omit<typeof workflow, 'tags'> {
+  const { tags: _tags, ...cleanWorkflow } = workflow;
+  return cleanWorkflow;
+}
+
+/**
  * Create a new workflow.
  */
 export async function createWorkflow(
@@ -271,9 +280,12 @@ export async function createWorkflow(
 
   log.info("Creating workflow", { name: workflow.name });
 
+  // Strip read-only fields like tags before sending
+  const cleanWorkflow = stripReadOnlyFields(workflow);
+
   return n8nFetch<N8nWorkflow>(config, "/workflows", {
     method: "POST",
-    body: JSON.stringify(workflow),
+    body: JSON.stringify(cleanWorkflow),
   });
 }
 
@@ -289,9 +301,12 @@ export async function updateWorkflow(
 
   log.info("Updating workflow", { id: workflowId, name: workflow.name });
 
+  // Strip read-only fields like tags before sending
+  const cleanWorkflow = stripReadOnlyFields(workflow);
+
   return n8nFetch<N8nWorkflow>(config, `/workflows/${workflowId}`, {
     method: "PUT",
-    body: JSON.stringify(workflow),
+    body: JSON.stringify(cleanWorkflow),
   });
 }
 
@@ -463,7 +478,8 @@ export async function activateWorkflowWithRetry(
     initialDelayMs?: number;
   } = {}
 ): Promise<N8nWorkflow> {
-  const { maxRetries = 3, initialDelayMs = 1000 } = options;
+  // Increased defaults: 5 retries starting at 2 seconds
+  const { maxRetries = 5, initialDelayMs = 2000 } = options;
   const config = configOverride || (await getConfigOrThrow());
 
   let lastError: Error | null = null;
@@ -477,16 +493,19 @@ export async function activateWorkflowWithRetry(
       return result;
     } catch (error) {
       lastError = error as Error;
+      // Check for subworkflow dependency errors
       const isSubworkflowError =
         lastError.message.includes("not published") ||
-        lastError.message.includes("references workflow");
+        lastError.message.includes("references workflow") ||
+        lastError.message.includes("Cannot publish workflow");
 
       if (attempt < maxRetries && isSubworkflowError) {
         const delay = initialDelayMs * Math.pow(2, attempt);
-        log.warn("Activation failed, retrying after delay", {
+        log.warn("Activation failed due to subworkflow dependency, retrying", {
           workflowId,
-          attempt,
-          delay,
+          attempt: attempt + 1,
+          maxRetries,
+          delayMs: delay,
           error: lastError.message,
         });
         await new Promise((resolve) => setTimeout(resolve, delay));
