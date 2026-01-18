@@ -7,6 +7,8 @@ import {
   createWorkflow,
   updateWorkflow,
   activateWorkflow,
+  activateWorkflowWithRetry,
+  deleteWorkflow,
   findWorkflowByName,
   extractWebhookPaths,
   type WorkflowDefinition,
@@ -66,7 +68,7 @@ export interface WorkflowRegistryEntry {
 
 export interface ImportResult {
   filename: string;
-  status: "imported" | "updated" | "skipped" | "failed";
+  status: "imported" | "updated" | "skipped" | "failed" | "created" | "activation_failed";
   n8nWorkflowId?: string;
   webhookPaths?: string[];
   error?: string;
@@ -77,7 +79,19 @@ export interface ImportProgress {
   completed: number;
   current: string;
   status: "pending" | "importing" | "complete" | "error";
+  phase?: "creating" | "activating";
   results: ImportResult[];
+}
+
+/**
+ * Track created workflows for rollback purposes.
+ */
+interface CreatedWorkflowInfo {
+  filename: string;
+  workflowId: string;
+  workflowName: string;
+  checksum: string;
+  webhookPaths: string[];
 }
 
 // ============================================
@@ -452,16 +466,13 @@ async function upsertWorkflowEntry(
  */
 export async function resetStuckImports(): Promise<number> {
   try {
-    const result = await execute(
+    const resetCount = await execute(
       `UPDATE workflow_registry
        SET import_status = 'pending',
            last_error = 'Reset: Previous import was interrupted',
            updated_at = NOW()
-       WHERE import_status IN ('importing', 'updating')
-       RETURNING workflow_file`
+       WHERE import_status IN ('importing', 'updating')`
     );
-
-    const resetCount = result.rowCount ?? 0;
 
     if (resetCount > 0) {
       log.warn("Reset stuck workflow imports", {
@@ -652,7 +663,16 @@ export async function importWorkflow(
 }
 
 /**
- * Import all workflows with dependency ordering.
+ * Import all workflows using two-phase approach.
+ *
+ * Phase 1: Create ALL workflows (inactive)
+ * Phase 2: Activate all workflows in dependency order
+ *
+ * This ensures all subworkflows exist before any parent workflow tries to
+ * reference them during activation, solving the "workflow not published" error.
+ *
+ * If Phase 1 fails, all created workflows are rolled back (deleted).
+ * If Phase 2 fails, workflows remain created but inactive (recoverable).
  */
 export async function importAllWorkflows(
   onProgress?: (progress: ImportProgress) => void,
@@ -662,58 +682,384 @@ export async function importAllWorkflows(
     configOverride?: N8nApiConfig;
   } = {}
 ): Promise<ImportProgress> {
-  const { workflowsDir = DEFAULT_WORKFLOWS_DIR } = options;
+  const { forceUpdate = false, workflowsDir = DEFAULT_WORKFLOWS_DIR } = options;
 
   const progress: ImportProgress = {
     total: WORKFLOW_IMPORT_ORDER.length,
     completed: 0,
     current: "",
     status: "pending",
+    phase: "creating",
     results: [],
   };
 
-  log.info("Starting workflow import", {
+  log.info("Starting two-phase workflow import", {
     total: progress.total,
-    forceUpdate: options.forceUpdate,
+    forceUpdate,
   });
+
+  // Get n8n config once for all operations
+  const config = options.configOverride || (await getN8nConfig());
+  if (!config) {
+    throw new Error("n8n not configured");
+  }
 
   progress.status = "importing";
   onProgress?.(progress);
+
+  // Track successfully created workflows for rollback
+  const createdWorkflows: CreatedWorkflowInfo[] = [];
+
+  // ============================================
+  // PHASE 1: Create all workflows (inactive)
+  // ============================================
+  log.info("Phase 1: Creating all workflows (inactive)");
+  progress.phase = "creating";
 
   for (const filename of WORKFLOW_IMPORT_ORDER) {
     progress.current = filename;
     onProgress?.(progress);
 
-    const result = await importWorkflow(filename, {
-      ...options,
-      workflowsDir,
-    });
+    try {
+      const result = await createWorkflowPhase1(filename, {
+        forceUpdate,
+        workflowsDir,
+        config,
+      });
 
-    progress.results.push(result);
-    progress.completed++;
-    onProgress?.(progress);
+      if (result.status === "skipped") {
+        // Already imported and no update needed
+        progress.results.push(result);
+        progress.completed++;
+        onProgress?.(progress);
+        continue;
+      }
 
-    // Brief delay between imports to avoid rate limiting
-    await new Promise((resolve) => setTimeout(resolve, 500));
+      if (result.status === "failed") {
+        // Phase 1 failure - rollback all created workflows
+        log.error("Phase 1 failed, rolling back created workflows", {
+          failedAt: filename,
+          error: result.error,
+          toRollback: createdWorkflows.length,
+        });
+
+        await rollbackCreatedWorkflows(createdWorkflows, config);
+
+        progress.results.push(result);
+        progress.status = "error";
+        progress.current = "";
+        onProgress?.(progress);
+        return progress;
+      }
+
+      // Track successfully created workflow
+      createdWorkflows.push({
+        filename,
+        workflowId: result.n8nWorkflowId!,
+        workflowName: result.filename.replace(/\.json$/, ""),
+        checksum: "",
+        webhookPaths: result.webhookPaths || [],
+      });
+
+      progress.results.push(result);
+      progress.completed++;
+      onProgress?.(progress);
+
+      // Brief delay to avoid rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } catch (error) {
+      // Unexpected error - rollback
+      log.error("Unexpected error in Phase 1, rolling back", {
+        filename,
+        error,
+        toRollback: createdWorkflows.length,
+      });
+
+      await rollbackCreatedWorkflows(createdWorkflows, config);
+
+      progress.results.push({
+        filename,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      progress.status = "error";
+      progress.current = "";
+      onProgress?.(progress);
+      return progress;
+    }
   }
 
+  // ============================================
+  // PHASE 2: Activate all workflows in order
+  // ============================================
+  log.info("Phase 2: Activating all workflows in dependency order", {
+    toActivate: createdWorkflows.length,
+  });
+  progress.phase = "activating";
+  progress.completed = 0;
+
+  for (const created of createdWorkflows) {
+    progress.current = created.filename;
+    onProgress?.(progress);
+
+    try {
+      // Use retry logic for activation to handle publish timing
+      await activateWorkflowWithRetry(created.workflowId, config, {
+        maxRetries: 3,
+        initialDelayMs: 1000,
+      });
+
+      // Update registry with activation success
+      await upsertWorkflowEntry({
+        workflow_file: created.filename,
+        is_active: true,
+        import_status: "imported",
+        last_import_at: new Date(),
+        last_error: null,
+      });
+
+      // Update result status from "created" to "imported"
+      const resultIndex = progress.results.findIndex(
+        (r) => r.filename === created.filename
+      );
+      if (resultIndex >= 0) {
+        progress.results[resultIndex].status = "imported";
+      }
+
+      log.info("Workflow activated", {
+        filename: created.filename,
+        workflowId: created.workflowId,
+      });
+
+      progress.completed++;
+      onProgress?.(progress);
+
+      // Brief delay between activations to let n8n register each workflow
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      log.error("Failed to activate workflow", {
+        filename: created.filename,
+        workflowId: created.workflowId,
+        error: errorMessage,
+      });
+
+      // Update registry with activation failure
+      await upsertWorkflowEntry({
+        workflow_file: created.filename,
+        import_status: "failed",
+        last_error: `Activation failed: ${errorMessage}`,
+      });
+
+      // Update result status
+      const resultIndex = progress.results.findIndex(
+        (r) => r.filename === created.filename
+      );
+      if (resultIndex >= 0) {
+        progress.results[resultIndex].status = "activation_failed";
+        progress.results[resultIndex].error = `Activation failed: ${errorMessage}`;
+      }
+
+      // Continue trying to activate other workflows - don't abort entirely
+      progress.completed++;
+      onProgress?.(progress);
+    }
+  }
+
+  // Calculate final status
   const failedCount = progress.results.filter(
-    (r) => r.status === "failed"
+    (r) => r.status === "failed" || r.status === "activation_failed"
   ).length;
 
   progress.status = failedCount > 0 ? "error" : "complete";
   progress.current = "";
+  progress.phase = undefined;
 
-  log.info("Workflow import complete", {
+  log.info("Two-phase workflow import complete", {
     total: progress.total,
     imported: progress.results.filter((r) => r.status === "imported").length,
     updated: progress.results.filter((r) => r.status === "updated").length,
     skipped: progress.results.filter((r) => r.status === "skipped").length,
+    activationFailed: progress.results.filter(
+      (r) => r.status === "activation_failed"
+    ).length,
     failed: failedCount,
   });
 
   onProgress?.(progress);
   return progress;
+}
+
+/**
+ * Phase 1: Create a workflow without activating it.
+ *
+ * Returns "created" status on success, "skipped" if already imported,
+ * or "failed" on error.
+ */
+async function createWorkflowPhase1(
+  filename: string,
+  options: {
+    forceUpdate: boolean;
+    workflowsDir: string;
+    config: N8nApiConfig;
+  }
+): Promise<ImportResult> {
+  const { forceUpdate, workflowsDir, config } = options;
+
+  let workflowName: string = filename.replace(/\.json$/, "");
+  let checksum: string = "";
+
+  try {
+    // Read workflow file
+    const fileData = await readWorkflowFile(filename, workflowsDir);
+    const workflow = fileData.workflow;
+    checksum = fileData.checksum;
+    workflowName = workflow.name;
+
+    // Check current registry status
+    const entry = await getWorkflowEntry(filename);
+
+    // Skip if already imported and no force update
+    if (
+      entry &&
+      entry.import_status === "imported" &&
+      entry.local_checksum === checksum &&
+      !forceUpdate
+    ) {
+      log.info("Workflow already imported, skipping", { filename });
+      return {
+        filename,
+        status: "skipped",
+        n8nWorkflowId: entry.n8n_workflow_id ?? undefined,
+        webhookPaths: entry.webhook_paths,
+      };
+    }
+
+    // Mark as importing
+    await upsertWorkflowEntry({
+      workflow_file: filename,
+      workflow_name: workflow.name,
+      local_version: checksum.substring(0, 8),
+      local_checksum: checksum,
+      import_status: entry?.n8n_workflow_id ? "updating" : "importing",
+    });
+
+    let n8nWorkflow: N8nWorkflow;
+    let isUpdate = false;
+
+    // Check if workflow already exists in n8n by name
+    const existingWorkflow = await findWorkflowByName(workflow.name, config);
+
+    if (existingWorkflow) {
+      // Update existing workflow (leave activation state unchanged)
+      n8nWorkflow = await updateWorkflow(existingWorkflow.id, workflow, config);
+      isUpdate = true;
+      log.info("Workflow updated (Phase 1)", {
+        filename,
+        id: n8nWorkflow.id,
+        name: n8nWorkflow.name,
+      });
+    } else {
+      // Create new workflow (inactive by default)
+      n8nWorkflow = await createWorkflow(workflow, config);
+      log.info("Workflow created (Phase 1)", {
+        filename,
+        id: n8nWorkflow.id,
+        name: n8nWorkflow.name,
+      });
+    }
+
+    // Extract webhook paths
+    const webhookPaths = extractWebhookPaths(workflow);
+
+    // Update registry with creation success (not yet activated)
+    await upsertWorkflowEntry({
+      workflow_file: filename,
+      workflow_name: workflow.name,
+      n8n_workflow_id: n8nWorkflow.id,
+      local_version: checksum.substring(0, 8),
+      local_checksum: checksum,
+      webhook_paths: webhookPaths,
+      is_active: false, // Will be updated in Phase 2
+      import_status: "importing", // Still in progress
+      last_import_at: new Date(),
+      last_error: null,
+    });
+
+    return {
+      filename,
+      status: isUpdate ? "updated" : "created",
+      n8nWorkflowId: n8nWorkflow.id,
+      webhookPaths,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    log.error("Failed to create workflow (Phase 1)", {
+      filename,
+      workflowName,
+      error: errorMessage,
+    });
+
+    // Update registry with failure
+    const entry = await getWorkflowEntry(filename);
+    await upsertWorkflowEntry({
+      workflow_file: filename,
+      workflow_name: workflowName,
+      local_version: checksum ? checksum.substring(0, 8) : "unknown",
+      local_checksum: checksum || null,
+      import_status: "failed",
+      last_error: errorMessage,
+      retry_count: (entry?.retry_count ?? 0) + 1,
+    });
+
+    return {
+      filename,
+      status: "failed",
+      error: errorMessage,
+    };
+  }
+}
+
+/**
+ * Rollback created workflows by deleting them from n8n.
+ *
+ * Called when Phase 1 fails to clean up partially created state.
+ */
+async function rollbackCreatedWorkflows(
+  created: CreatedWorkflowInfo[],
+  config: N8nApiConfig
+): Promise<void> {
+  log.warn("Rolling back created workflows", { count: created.length });
+
+  for (const workflow of created) {
+    try {
+      await deleteWorkflow(workflow.workflowId, config);
+
+      // Reset registry entry
+      await upsertWorkflowEntry({
+        workflow_file: workflow.filename,
+        n8n_workflow_id: null,
+        import_status: "pending",
+        is_active: false,
+        last_error: "Rolled back due to import failure",
+      });
+
+      log.info("Rolled back workflow", {
+        filename: workflow.filename,
+        workflowId: workflow.workflowId,
+      });
+    } catch (error) {
+      log.error("Failed to rollback workflow", {
+        filename: workflow.filename,
+        workflowId: workflow.workflowId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Continue with other rollbacks
+    }
+  }
 }
 
 // ============================================

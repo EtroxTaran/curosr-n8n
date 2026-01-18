@@ -6,9 +6,7 @@ import {
   generateCorrelationId,
 } from '@/lib/logger';
 
-// Mock console methods
-const originalConsoleLog = console.log;
-const originalConsoleError = console.error;
+// Note: Original console methods are preserved by vi.restoreAllMocks() in afterEach
 
 describe('Logger', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
@@ -160,14 +158,13 @@ describe('Logger', () => {
 
 describe('Production Mode Logging', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     process.env.ENABLE_TEST_LOGS = 'true';
     process.env.NODE_ENV = 'production';
 
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -252,13 +249,11 @@ describe('generateCorrelationId', () => {
 });
 
 describe('Test Mode Behavior', () => {
-  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-
   beforeEach(() => {
     delete process.env.ENABLE_TEST_LOGS; // Don't enable test logs
     process.env.NODE_ENV = 'test';
 
-    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {

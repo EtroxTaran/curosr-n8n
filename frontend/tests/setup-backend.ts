@@ -149,7 +149,7 @@ export function createN8nMockFetch(overrides: Partial<MockFetchConfig> = {}) {
   const defaultConfig: MockFetchConfig = {
     '/healthz': { status: 200, body: 'OK' },
     '/api/v1/workflows?limit=1': { status: 200, body: { data: [mockWorkflowList.data[0]] } },
-    '/api/v1/workflows': (url, init) => {
+    '/api/v1/workflows': (_url, init) => {
       // POST = create workflow
       if (init?.method === 'POST') {
         const body = JSON.parse(init.body as string);
@@ -168,7 +168,15 @@ export function createN8nMockFetch(overrides: Partial<MockFetchConfig> = {}) {
     '/api/v1/': { status: 200, body: { version: '1.50.0', publicApi: true } },
   };
 
-  return createMockFetch({ ...defaultConfig, ...overrides });
+  // Filter out undefined values from overrides before merging
+  const filteredOverrides: MockFetchConfig = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) {
+      filteredOverrides[key] = value;
+    }
+  }
+
+  return createMockFetch({ ...defaultConfig, ...filteredOverrides });
 }
 
 // ============================================

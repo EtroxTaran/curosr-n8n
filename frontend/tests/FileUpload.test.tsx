@@ -445,7 +445,7 @@ describe("FileUpload", () => {
       );
 
       mockXHRInstance.addEventListener.mockImplementation(
-        (event: string, handler: () => void) => {
+        (event: string, _handler: () => void) => {
           if (event === "load") {
             // Don't auto-complete - we want to test progress
           }
@@ -467,8 +467,8 @@ describe("FileUpload", () => {
       });
 
       // Simulate progress event
-      if (progressHandler) {
-        progressHandler({ loaded: 50, total: 100 });
+      if (progressHandler !== null) {
+        (progressHandler as (event: { loaded: number; total: number }) => void)({ loaded: 50, total: 100 });
       }
 
       // Progress should be displayed

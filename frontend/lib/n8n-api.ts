@@ -440,6 +440,66 @@ export async function comprehensiveHealthCheck(
 }
 
 // ============================================
+// Batch Operations (Two-Phase Import Support)
+// ============================================
+
+/**
+ * Activate workflow with retry logic.
+ *
+ * n8n sometimes needs time to "publish" subworkflows before parent workflows
+ * can successfully reference them. This function retries activation with
+ * exponential backoff.
+ *
+ * @param workflowId - The workflow ID to activate
+ * @param configOverride - Optional API config override
+ * @param options - Retry options
+ * @returns The activated workflow
+ */
+export async function activateWorkflowWithRetry(
+  workflowId: string,
+  configOverride?: N8nApiConfig,
+  options: {
+    maxRetries?: number;
+    initialDelayMs?: number;
+  } = {}
+): Promise<N8nWorkflow> {
+  const { maxRetries = 3, initialDelayMs = 1000 } = options;
+  const config = configOverride || (await getConfigOrThrow());
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await activateWorkflow(workflowId, config);
+      if (attempt > 0) {
+        log.info("Workflow activated after retry", { workflowId, attempt });
+      }
+      return result;
+    } catch (error) {
+      lastError = error as Error;
+      const isSubworkflowError =
+        lastError.message.includes("not published") ||
+        lastError.message.includes("references workflow");
+
+      if (attempt < maxRetries && isSubworkflowError) {
+        const delay = initialDelayMs * Math.pow(2, attempt);
+        log.warn("Activation failed, retrying after delay", {
+          workflowId,
+          attempt,
+          delay,
+          error: lastError.message,
+        });
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      } else {
+        break;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+// ============================================
 // Webhook URL Extraction
 // ============================================
 

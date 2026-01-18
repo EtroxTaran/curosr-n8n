@@ -18,7 +18,15 @@ export interface WorkflowStatus {
   localVersion: string;
   n8nWorkflowId: string | null;
   isActive: boolean;
-  importStatus: "pending" | "importing" | "imported" | "failed" | "update_available" | "updating";
+  importStatus:
+    | "pending"
+    | "importing"
+    | "imported"
+    | "failed"
+    | "update_available"
+    | "updating"
+    | "created"
+    | "activation_failed";
   webhookPaths: string[];
   hasCredentials: boolean;
   lastImportAt: string | null;
@@ -29,7 +37,12 @@ interface SetupStepImportProps {
   workflows: WorkflowStatus[];
   isLoading: boolean;
   isImporting: boolean;
-  importProgress: { current: string; completed: number; total: number } | null;
+  importProgress: {
+    current: string;
+    completed: number;
+    total: number;
+    phase?: "creating" | "activating";
+  } | null;
   onStartImport: () => void;
   onRetryFailed: () => void;
 }
@@ -41,7 +54,10 @@ function getStatusIcon(status: WorkflowStatus["importStatus"]) {
     case "importing":
     case "updating":
       return <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />;
+    case "created":
+      return <Clock className="w-4 h-4 text-blue-600" />;
     case "failed":
+    case "activation_failed":
       return <XCircle className="w-4 h-4 text-red-600" />;
     case "update_available":
       return <AlertTriangle className="w-4 h-4 text-amber-600" />;
@@ -55,11 +71,15 @@ function getStatusBadge(status: WorkflowStatus["importStatus"]) {
     case "imported":
       return <Badge variant="default" className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Imported</Badge>;
     case "importing":
-      return <Badge variant="default" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Importing...</Badge>;
+      return <Badge variant="default" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Creating...</Badge>;
     case "updating":
       return <Badge variant="default" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Updating...</Badge>;
+    case "created":
+      return <Badge variant="default" className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Created</Badge>;
     case "failed":
       return <Badge variant="destructive">Failed</Badge>;
+    case "activation_failed":
+      return <Badge variant="destructive">Activation Failed</Badge>;
     case "update_available":
       return <Badge variant="default" className="bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200">Update Available</Badge>;
     default:
@@ -76,7 +96,9 @@ export function SetupStepImport({
   onRetryFailed,
 }: SetupStepImportProps) {
   const importedCount = workflows.filter((w) => w.importStatus === "imported").length;
-  const failedCount = workflows.filter((w) => w.importStatus === "failed").length;
+  const failedCount = workflows.filter(
+    (w) => w.importStatus === "failed" || w.importStatus === "activation_failed"
+  ).length;
   const pendingCount = workflows.filter((w) => w.importStatus === "pending").length;
 
   const allImported = importedCount === workflows.length;
@@ -102,9 +124,46 @@ export function SetupStepImport({
 
       {/* Import progress */}
       {isImporting && importProgress && (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {/* Phase indicator */}
+          <div className="flex items-center justify-center gap-4">
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
+                importProgress.phase === "creating"
+                  ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              <span className="font-medium">1.</span>
+              <span>Creating Workflows</span>
+              {importProgress.phase === "creating" && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              )}
+              {importProgress.phase === "activating" && (
+                <CheckCircle className="w-3.5 h-3.5 text-green-600" />
+              )}
+            </div>
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
+                importProgress.phase === "activating"
+                  ? "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              <span className="font-medium">2.</span>
+              <span>Activating Workflows</span>
+              {importProgress.phase === "activating" && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              )}
+            </div>
+          </div>
+
+          {/* Current workflow */}
           <div className="flex justify-between text-sm">
-            <span>Importing: {importProgress.current}</span>
+            <span>
+              {importProgress.phase === "creating" ? "Creating" : "Activating"}:{" "}
+              <span className="font-medium">{importProgress.current}</span>
+            </span>
             <span>
               {importProgress.completed}/{importProgress.total}
             </span>
@@ -212,11 +271,20 @@ export function SetupStepImport({
       )}
 
       {hasFailures && !isImporting && (
-        <div className="text-center text-sm text-muted-foreground">
+        <div className="text-center text-sm text-muted-foreground space-y-2">
           <p>
-            Some workflows failed to import. You can retry them or continue
-            and fix them later in Settings.
+            Some workflows failed to{" "}
+            {workflows.some((w) => w.importStatus === "activation_failed")
+              ? "activate"
+              : "import"}
+            . You can retry them or continue and fix them later in Settings.
           </p>
+          {workflows.some((w) => w.importStatus === "activation_failed") && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              Tip: Activation failures often occur when dependent workflows aren&apos;t
+              ready. Retry usually fixes this.
+            </p>
+          )}
         </div>
       )}
     </div>

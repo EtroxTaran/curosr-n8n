@@ -88,8 +88,8 @@ describe("API: /api/start-project", () => {
         return Response.json({ error: "At least one input file is required" }, { status: 400 });
       }
 
-      const projectId = body.projectId || "test-project-id";
-      const sessionId = `session_${Date.now()}`;
+      // projectId and sessionId would be used in actual implementation
+      // but this mock just validates input structure
 
       // Create project in database
       const result = await mockQuery(

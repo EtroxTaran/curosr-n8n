@@ -518,9 +518,6 @@ describe("ChatWindow", () => {
         <ChatWindow messages={messages} onSendMessage={mockOnSendMessage} />
       );
 
-      // The scroll area should be present
-      const scrollArea = document.querySelector('[data-radix-scroll-area-viewport]') ||
-        document.querySelector('.overflow-auto, .overflow-y-auto');
       // Component should render messages
       expect(screen.getByText("Message 1")).toBeInTheDocument();
       expect(screen.getByText("Message 2")).toBeInTheDocument();

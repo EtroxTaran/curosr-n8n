@@ -6,7 +6,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import path from 'path';
 
 // Read actual fixtures for testing
 import simpleWorkflow from './fixtures/mock-workflow-simple.json';
@@ -137,8 +136,6 @@ import {
   importAllWorkflows,
   checkForUpdates,
   getWorkflowStatus,
-  type BundledWorkflow,
-  type WorkflowRegistryEntry,
   type ImportProgress,
 } from '@/lib/workflow-importer';
 
@@ -681,28 +678,29 @@ describe('workflow-importer', () => {
       expect(progressUpdates.length).toBeGreaterThan(0);
     });
 
-    it('should continue on partial failure', async () => {
+    it('should rollback on Phase 1 failure (all-or-none)', async () => {
       mockReadFile.mockResolvedValue(simpleWorkflowStr);
       mockAccess.mockResolvedValue(undefined);
       mockQueryOne.mockResolvedValue(null);
       mockFindWorkflowByName.mockResolvedValue(null);
 
-      let callCount = 0;
+      let createCallCount = 0;
       mockCreateWorkflow.mockImplementation(() => {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.reject(new Error('First failed'));
+        createCallCount++;
+        if (createCallCount === 2) {
+          // Fail on second workflow to test rollback
+          return Promise.reject(new Error('Second workflow failed'));
         }
-        return Promise.resolve({ ...mockWorkflowResponse, id: `wf-${callCount}` });
+        return Promise.resolve({ ...mockWorkflowResponse, id: `wf-${createCallCount}` });
       });
 
       const result = await importAllWorkflows(undefined, { configOverride: mockN8nConfig });
 
-      // Should have results for all workflows
-      expect(result.results.length).toBe(result.total);
-      // Should include at least one failure
+      // With two-phase import, Phase 1 failures cause rollback
+      expect(result.status).toBe('error');
+      // Should have results up to and including the failed workflow
       const failedResults = result.results.filter(r => r.status === 'failed');
-      expect(failedResults.length).toBeGreaterThan(0);
+      expect(failedResults.length).toBeGreaterThanOrEqual(1);
     });
   });
 

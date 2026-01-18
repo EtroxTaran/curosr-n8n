@@ -296,16 +296,32 @@ describe('SetupStepImport', () => {
     expect(spinner).toBeInTheDocument();
   });
 
-  it('should show importing progress', () => {
+  it('should show importing progress with phase indicator', () => {
     render(
       <SetupStepImport
         {...defaultProps}
         isImporting={true}
-        importProgress={{ current: 'Main Workflow', completed: 1, total: 2 }}
+        importProgress={{ current: 'Main Workflow', completed: 1, total: 2, phase: 'creating' }}
       />
     );
 
-    expect(screen.getByText(/Importing: Main Workflow/i)).toBeInTheDocument();
+    // Should show phase indicator and current workflow in progress display
+    expect(screen.getByText('Creating Workflows')).toBeInTheDocument();
+    expect(screen.getByText(/Creating:/i)).toBeInTheDocument();
+  });
+
+  it('should show activating phase progress', () => {
+    render(
+      <SetupStepImport
+        {...defaultProps}
+        isImporting={true}
+        importProgress={{ current: 'Main Workflow', completed: 1, total: 2, phase: 'activating' }}
+      />
+    );
+
+    // Should show activating phase
+    expect(screen.getByText('Activating Workflows')).toBeInTheDocument();
+    expect(screen.getByText(/Activating:/i)).toBeInTheDocument();
   });
 
   it('should show success message when all imported', () => {
