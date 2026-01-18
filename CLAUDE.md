@@ -4,6 +4,7 @@
 
 - [Overview](#overview)
 - [Quick Start](#quick-start)
+- [Development](#development)
 - [Architecture](#architecture)
 - [MCP Setup](#mcp-setup)
 - [Workflows](#workflows)
@@ -19,7 +20,7 @@
 
 The **AI Product Factory** is an n8n-based AI orchestration system that generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-**Version**: v3.0.4 (2026-01-18)
+**Version**: v3.0.5 (2026-01-18)
 
 ### Key Capabilities
 
@@ -69,6 +70,60 @@ npm run sync-workflows:dry-run
 npm run test:local-prod:up    # Start local prod environment
 npm run test:local-prod:validate
 ```
+
+---
+
+## Development
+
+### Prerequisites
+
+- Node.js >= 20.0.0
+- npm
+- Docker & Docker Compose (for testing)
+
+### Setup
+
+```bash
+# Clone and install
+git clone <repo>
+cd n8n-AI-Product-Factory
+npm install          # Installs dependencies + sets up husky hooks
+
+# Frontend
+cd frontend
+npm install
+```
+
+### Pre-commit Hooks (Husky)
+
+Git hooks are managed via [Husky](https://typicode.github.io/husky/). Hooks are installed automatically when you run `npm install`.
+
+**What runs on commit:**
+
+| Files Changed | Check | Command |
+|---------------|-------|---------|
+| `workflows/*.json` | Workflow validation | `npm run test:workflows` |
+| `frontend/**/*.{ts,tsx}` | TypeScript check | `npm run typecheck` |
+
+**Bypass hooks (emergency only):**
+```bash
+git commit --no-verify -m "emergency fix"
+```
+
+**Manual hook execution:**
+```bash
+# Run the pre-commit hook manually
+sh .husky/pre-commit
+```
+
+### Key Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm install` | Install deps + setup husky hooks |
+| `npm run test:workflows` | Validate workflow JSON files |
+| `npm run test:all` | Full test suite with Docker |
+| `npm run sync-workflows` | Push workflows to n8n |
 
 ---
 
@@ -240,19 +295,16 @@ competitive_analysis → Competitor intelligence
 
 ### Editing Workflows
 
-**Pre-commit Hook**: Workflow validation runs automatically when you commit changes to `workflows/*.json`. The hook will block commits if validation fails.
+Workflow validation runs automatically via pre-commit hook (see [Development](#development)).
 
 ```bash
-# Manual validation (if needed)
+# Manual validation
 npm run test:workflows              # Quick validation (no n8n required)
 
 # Full validation with n8n import test
 npm run test:env:up
 N8N_API_KEY=<your-key> npm run test:workflows
 npm run test:env:down
-
-# Skip pre-commit hook (emergency only)
-git commit --no-verify -m "message"
 ```
 
 **What the tests validate:**
@@ -610,6 +662,7 @@ export MAX_MCP_OUTPUT_TOKENS=50000
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.0.5 | 2026-01-18 | Pre-commit hooks (husky) for workflow and TypeScript validation |
 | v3.0.4 | 2026-01-18 | Workflow import tests (94 tests), fixed tags read-only error |
 | v3.0.3 | 2026-01-18 | Automatic database migrations via init container pattern |
 | v3.0.2 | 2026-01-18 | Integration test suite (79 tests), EXPERT_CONTEXT.md |
