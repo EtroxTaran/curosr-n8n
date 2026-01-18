@@ -20,7 +20,7 @@
 
 The **AI Product Factory** is an n8n-based AI orchestration system that generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-**Version**: v3.0.5 (2026-01-18)
+**Version**: v3.0.6 (2026-01-18)
 
 ### Key Capabilities
 
@@ -348,7 +348,9 @@ npm run test:env:down
 | `/api/governance` | POST | Submit governance decisions |
 | `/api/setup/status` | GET | Setup wizard status (public) |
 | `/api/setup/n8n/test-connection` | POST | Test n8n connectivity |
-| `/api/setup/workflows/import` | POST | Import workflows to n8n |
+| `/api/setup/workflows/import` | POST | Import workflows to n8n (two-phase) |
+| `/api/workflows/export` | POST | Export workflow as sanitized JSON |
+| `/api/workflows/export/commit` | POST | Export workflow and save to git |
 | `/api/settings/n8n` | GET/PUT | Manage n8n settings |
 
 ### Setup Wizard
@@ -357,10 +359,15 @@ npm run test:env:down
 
 1. **Welcome**: Prerequisites check
 2. **Connect**: Enter n8n URL + API key
-3. **Import**: Import workflows with progress
+3. **Import**: Import workflows with two-phase system (create all → activate all)
 4. **Webhooks**: Auto-detect webhook URLs
 5. **Verify**: Test all connections
 6. **Complete**: Success summary
+
+**Two-Phase Import**: Workflows are imported using a two-phase approach to prevent "workflow not published" errors:
+- Phase 1: Create ALL workflows (inactive)
+- Phase 2: Activate all workflows in dependency order with retry logic
+- Rollback on Phase 1 failure: all created workflows are deleted
 
 ### Running the Dashboard
 
@@ -662,6 +669,7 @@ export MAX_MCP_OUTPUT_TOKENS=50000
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.0.6 | 2026-01-18 | Two-phase workflow import with rollback, workflow export API |
 | v3.0.5 | 2026-01-18 | Pre-commit hooks (husky) for workflow and TypeScript validation |
 | v3.0.4 | 2026-01-18 | Workflow import tests (94 tests), fixed tags read-only error |
 | v3.0.3 | 2026-01-18 | Automatic database migrations via init container pattern |
