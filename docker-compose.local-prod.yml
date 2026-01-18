@@ -234,7 +234,26 @@ services:
       retries: 5
       start_period: 30s
 
-  # --- 7. Frontend Dashboard ---
+  # --- 7. Database Migration Service (Init Container) ---
+  # Runs ONCE at startup to ensure all database tables exist
+  # Exits with code 0 on success, blocking dependent services until complete
+  # This prevents race conditions when multiple replicas start simultaneously
+  migration:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.migrate
+    environment:
+      # Use 'dashboard' database for Better-Auth tables (separate from n8n's 'n8n' database)
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-n8n}:${POSTGRES_PASSWORD:-n8n_test_password}@postgres:5432/dashboard
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - n8n_network
+    # No restart - this is a one-shot init container
+    restart: "no"
+
+  # --- 8. Frontend Dashboard ---
   # Matches Dokploy configuration
   frontend:
     build:
@@ -263,9 +282,11 @@ services:
       - ALLOWED_EMAIL_DOMAINS=${ALLOWED_EMAIL_DOMAINS:-}
       # Workflow import configuration
       - WORKFLOWS_DIR=/workflows
+      # Skip migrations in entrypoint (handled by migration service)
+      - SKIP_MIGRATIONS=true
     depends_on:
-      postgres:
-        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
       n8n:
         condition: service_healthy
       seaweedfs:

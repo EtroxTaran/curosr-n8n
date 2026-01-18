@@ -5,8 +5,17 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  AI Product Factory - Dashboard Startup"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-# Wait for database to be ready (with timeout)
-echo "⏳ Waiting for database to be ready..."
+# Check if migrations should be skipped (handled by init container)
+if [ "$SKIP_MIGRATIONS" = "true" ]; then
+    echo "✅ Migrations handled by init container (SKIP_MIGRATIONS=true)"
+    echo ""
+    echo "🚀 Starting application..."
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    exec node .output/server/index.mjs
+fi
+
+# Legacy mode: Run migrations in entrypoint (for backwards compatibility)
+echo "⏳ Running database migrations..."
 MAX_RETRIES=30
 RETRY_COUNT=0
 
