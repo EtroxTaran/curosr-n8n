@@ -865,10 +865,7 @@ curosr-n8n/
         │
         ├── WORKFLOW_DOCUMENTATION.md       # THIS FILE - Complete workflow docs
         ├── README.md                       # Setup and architecture overview
-        ├── TITAN_AGENT_PROMPTS.md          # Agent prompt templates
-        ├── AI_AGENT_CONVERSION_GUIDE.md    # HTTP→AI Agent conversion guide
-        ├── TESTING_CHECKLIST.md            # QA procedures
-        └── CONVERSION_SUMMARY.md           # Version history changelog
+        └── TITAN_AGENT_PROMPTS.md          # Agent prompt templates
 ```
 
 ### Output Structure (Per Project)

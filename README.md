@@ -2,7 +2,7 @@
 
 A sophisticated n8n-based AI orchestration system that automatically generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-![Version](https://img.shields.io/badge/version-2.5.0-blue)
+![Version](https://img.shields.io/badge/version-3.0.2-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![n8n](https://img.shields.io/badge/n8n-v1.82+-orange)
 ![Node](https://img.shields.io/badge/node-20+-brightgreen)
@@ -208,11 +208,11 @@ See [.env.example](.env.example) for all required variables. Key sections:
 
 | Document | Description |
 |----------|-------------|
+| [EXPERT_CONTEXT.md](EXPERT_CONTEXT.md) | Comprehensive tech stack, architecture, and product vision |
 | [CLAUDE.md](CLAUDE.md) | Complete integration guide for AI assistants |
 | [workflows/README.md](workflows/README.md) | Workflow overview and setup |
 | [workflows/WORKFLOW_DOCUMENTATION.md](workflows/WORKFLOW_DOCUMENTATION.md) | Detailed workflow reference |
 | [workflows/TITAN_AGENT_PROMPTS.md](workflows/TITAN_AGENT_PROMPTS.md) | AI agent system prompts |
-| [workflows/TESTING_CHECKLIST.md](workflows/TESTING_CHECKLIST.md) | QA procedures and test cases |
 
 ## Development
 

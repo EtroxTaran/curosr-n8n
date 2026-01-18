@@ -93,6 +93,65 @@ services:
     networks:
       - test-network
 
+  # Qdrant vector database for semantic search testing
+  qdrant-test:
+    image: qdrant/qdrant:v1.16
+    container_name: pf-qdrant-test
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    healthcheck:
+      # IMPORTANT: Qdrant container does NOT have curl or wget
+      # Use bash TCP check instead
+      test: ["CMD-SHELL", "bash -c '(echo > /dev/tcp/localhost/6333) > /dev/null 2>&1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - test-network
+
+  # FalkorDB for Graphiti knowledge graph testing
+  falkordb-test:
+    image: falkordb/falkordb:latest
+    container_name: pf-falkordb-test
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - test-network
+
+  # Graphiti knowledge graph service
+  graphiti-test:
+    image: zepai/knowledge-graph-mcp:standalone
+    container_name: pf-graphiti-test
+    environment:
+      # Use a test API key (can be anything for testing)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-test-api-key}
+      - FALKORDB_URI=redis://falkordb-test:6379
+      - FALKORDB_PASSWORD=
+      - FALKORDB_DATABASE=default_db
+      - GRAPHITI_GROUP_ID=test
+      - PORT=8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      falkordb-test:
+        condition: service_healthy
+    healthcheck:
+      # Graphiti container has curl but NOT wget
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health > /dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    networks:
+      - test-network
+
 networks:
   test-network:
     driver: bridge

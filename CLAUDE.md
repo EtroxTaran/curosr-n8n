@@ -33,10 +33,11 @@ This system uses specialized AI agents working together to:
 - **Loading Skeletons**: Smooth route transitions with contextual skeleton loaders
 - **Toast Notifications**: User feedback via Sonner for success/error states across all operations
 - **Setup Wizard**: 6-step guided wizard for n8n integration configuration with workflow import and webhook detection
+- **Integration Test Suite**: 79 integration tests + E2E tests covering complete workflow lifecycle
 
 ### Version
 
-Current version: **v3.0.1** (2026-01-16)
+Current version: **v3.0.2** (2026-01-18)
 
 ---
 
@@ -1029,7 +1030,7 @@ Based on [n8n's 15 Best Practices for Production AI Agents](https://blog.n8n.io/
 #### Pre-Deployment Phase
 
 7. **Test with real-world scenarios**:
-   - Use `workflows/TESTING_CHECKLIST.md`
+   - Run integration tests: `npm run test:integration`
    - Test with various document types (PDF, MD, DOCX)
    - Verify edge cases (empty docs, huge files, malformed input)
 
@@ -2906,9 +2907,7 @@ ai-product-factory/
 │   │
 │   └── Documentation/
 │       ├── README.md                      # Setup and architecture guide
-│       ├── AI_AGENT_CONVERSION_GUIDE.md   # Technical implementation details
-│       ├── CONVERSION_SUMMARY.md          # Change log and version history
-│       ├── TESTING_CHECKLIST.md           # QA procedures and test cases
+│       ├── WORKFLOW_DOCUMENTATION.md      # Detailed workflow documentation
 │       └── TITAN_AGENT_PROMPTS.md         # Complete agent prompt templates
 │
 ├── vitest.config.ts                       # Root Vitest configuration (backend only)
@@ -2927,9 +2926,27 @@ The AI Product Factory includes comprehensive test suites for both backend integ
 ```
 ai-product-factory/
 ├── vitest.config.ts              # Root config - backend tests only
+├── vitest.integration.config.ts  # Integration test config
+├── vitest.e2e.config.ts          # E2E test config
 ├── tests/
-│   ├── backend.test.ts           # Backend integration tests (9 tests)
-│   └── production-parity.test.ts # Production parity tests (requires local-prod env)
+│   ├── backend.test.ts           # Backend unit tests (9 tests)
+│   ├── production-parity.test.ts # Production parity tests
+│   ├── integration/              # Integration test suite (79 tests)
+│   │   ├── setup.ts              # Integration test setup
+│   │   ├── 01-file-upload.test.ts
+│   │   ├── 02-project-creation.test.ts
+│   │   ├── 03-governance-flow.test.ts
+│   │   ├── 04-phase-transitions.test.ts
+│   │   ├── 05-artifact-storage.test.ts
+│   │   ├── 06-error-recovery.test.ts
+│   │   └── 07-state-resumption.test.ts
+│   ├── helpers/                  # Test utilities
+│   │   ├── db-helpers.ts         # Database operations
+│   │   ├── s3-helpers.ts         # S3 operations
+│   │   └── test-fixtures.ts      # Test data generators
+│   └── mocks/                    # Mock servers
+│       ├── mock-n8n-server.ts    # Mock n8n webhooks
+│       └── governance-payloads.ts
 └── frontend/
     ├── vitest.config.ts          # Frontend config - React component tests
     └── tests/
@@ -2938,7 +2955,7 @@ ai-product-factory/
         └── request-context.test.ts    # Request context tests (26 tests)
 ```
 
-**Total Tests:** 59+ (9 backend + 50 frontend + production-parity tests)
+**Total Tests:** 500+ (79 integration + 50 frontend + 9 backend + E2E tests)
 
 ### Running Tests
 
@@ -2949,7 +2966,16 @@ npm run test:backend
 # Run all frontend tests (from project root)
 npm run test:frontend
 
-# Run frontend tests directly (from frontend directory)
+# Run integration tests (requires Docker test environment)
+npm run test:integration
+
+# Run E2E tests
+npm run test:e2e
+
+# Run all tests
+npm run test:all
+
+# Frontend tests directly (from frontend directory)
 cd frontend && npm run test
 
 # Watch mode for development
@@ -4180,7 +4206,18 @@ Common modifications:
 
 ### Testing Changes
 
-Follow the comprehensive testing checklist in `workflows/TESTING_CHECKLIST.md`:
+Run the comprehensive test suite:
+
+```bash
+# Run all tests
+npm run test:all
+
+# Run integration tests only
+npm run test:integration
+
+# Run frontend tests only
+npm run test:frontend
+```
 
 #### Unit Tests (Individual Components)
 1. Test each subworkflow independently
@@ -4189,22 +4226,23 @@ Follow the comprehensive testing checklist in `workflows/TESTING_CHECKLIST.md`:
 4. Validate output format
 
 #### Integration Tests (Full Workflow)
-1. Run complete workflow with test data
+1. Run `npm run test:integration` (79 tests)
 2. Monitor execution logs for errors
 3. Verify all phases complete successfully
 4. Check output quality
 
 #### Regression Tests (After Changes)
-1. Run test suite from `TESTING_CHECKLIST.md`
+1. Run `npm run test:all`
 2. Compare outputs with baseline
 3. Verify no degradation in quality scores
 4. Check execution time hasn't increased significantly
 
 ### Version History
 
-See `workflows/CONVERSION_SUMMARY.md` for complete change history.
+See `EXPERT_CONTEXT.md` for comprehensive system documentation and `workflows/README.md` for workflow-specific changes.
 
 **Recent Versions**:
+- **v3.0.2** (2026-01-18): **Integration Test Suite & Documentation** - Complete 79 integration tests covering file upload, project creation, governance flow, phase transitions, artifact storage, error recovery, and state resumption. Created comprehensive `EXPERT_CONTEXT.md` with full tech stack, architecture, and product vision. Documentation cleanup removing outdated files.
 - **v3.0.1** (2026-01-16): **Resilient Database Queries** - Fix for `is_setup_complete() does not exist` error on database upgrades. Added PostgreSQL error detection helpers (`isPostgresUndefinedFunctionError`, `isPostgresUndefinedTableError`) and fallback implementations that query tables directly when DB functions/views don't exist. 421 tests passing including 32 new settings tests.
 - **v3.0.0** (2026-01-16): **Setup Wizard for n8n Integration** - 6-step guided wizard (`/setup/*` routes), n8n API client for workflow import, encrypted API key storage (AES-256-GCM), settings management (`/settings/n8n`), database schema for app_settings and workflow_registry, 390 tests passing
 - **v2.9.0** (2026-01-15): Frontend UI/UX improvements - route error boundaries (`RouteErrorBoundary`), loading skeletons (`ProjectDetailSkeleton`, `ProjectListSkeleton`, `FormSkeleton`), toast notifications (Sonner), Alert components with variants, AlertDialog for confirmations, `components.json` for shadcn CLI
@@ -4227,11 +4265,11 @@ See `workflows/CONVERSION_SUMMARY.md` for complete change history.
 
 To contribute improvements:
 
-1. **Test thoroughly**: Use `TESTING_CHECKLIST.md`
+1. **Test thoroughly**: Run `npm run test:all`
 2. **Document changes**: Update relevant markdown files
 3. **Export workflows**: Export modified `.json` files from n8n
 4. **Version appropriately**: Follow semantic versioning (major.minor.patch)
-5. **Share knowledge**: Update this `claude.md` with new patterns
+5. **Share knowledge**: Update this `CLAUDE.md` with new patterns
 
 ---
 
@@ -4318,7 +4356,7 @@ Ask Claude: "Analyze the codebase architecture using Context7"
 
 For issues or questions:
 1. Check this guide's Troubleshooting section
-2. Review `workflows/TESTING_CHECKLIST.md`
+2. Review `EXPERT_CONTEXT.md` for system overview
 3. Check `workflows/README.md` for setup details
 4. Consult n8n community: https://community.n8n.io
 

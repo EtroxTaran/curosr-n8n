@@ -1,8 +1,13 @@
-# AI Product Factory - Workflow Suite v2.6.0
+# AI Product Factory - Workflow Suite v3.0.2
 
-## Latest Update (2026-01-14)
+## Latest Update (2026-01-18)
 
-**v2.6.0** adds a complete Dashboard Application with authentication, ADR viewer, export engine, and CI/CD pipeline.
+**v3.0.2** completes the integration test suite with 79 passing tests. See EXPERT_CONTEXT.md for comprehensive documentation.
+
+### Recent Updates
+- **v3.0.2** (2026-01-18): Integration test suite complete, documentation cleanup
+- **v3.0.1** (2026-01-16): Resilient DB queries with fallback implementations
+- **v3.0.0** (2026-01-16): Setup Wizard for n8n integration, encrypted API keys
 
 ## What's New in v2.6.0
 
@@ -52,9 +57,7 @@
 
 ### Documentation Files
 - **`README.md`** - This file (overview)
-- **`AI_AGENT_CONVERSION_GUIDE.md`** - Complete setup and usage guide
-- **`CONVERSION_SUMMARY.md`** - Detailed summary of all changes
-- **`TESTING_CHECKLIST.md`** - Comprehensive testing guide
+- **`WORKFLOW_DOCUMENTATION.md`** - Detailed workflow documentation
 - **`TITAN_AGENT_PROMPTS.md`** - Agent prompt templates
 
 ## Quick Start
