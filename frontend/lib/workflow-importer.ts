@@ -175,7 +175,7 @@ function stripCredentials(
 
 /**
  * Parse workflow JSON file content.
- * Optionally strips credentials for fresh imports.
+ * Strips credentials and tags (read-only fields) for fresh imports.
  */
 function parseWorkflowFile(
   content: string,
@@ -194,14 +194,15 @@ function parseWorkflowFile(
     nodes = stripCredentials(data.nodes, { logStripped: true });
   }
 
+  // IMPORTANT: Explicitly construct return object WITHOUT tags
+  // Tags are read-only in n8n API and will cause 400 errors if included
+  // Do NOT use spread operator on 'data' as it would include tags
   return {
     name: data.name,
     nodes,
     connections: data.connections || {},
     settings: data.settings,
     staticData: data.staticData,
-    // NOTE: tags field is read-only in n8n API - cannot be set during create/update
-    // Tags must be managed separately via the n8n UI or tags API endpoint
   };
 }
 
@@ -804,11 +805,12 @@ export async function importAllWorkflows(
     onProgress?.(progress);
 
     try {
-      // Use retry logic for activation to handle publish timing
-      // n8n needs time to fully "publish" subworkflows before parent workflows can reference them
+      // Use aggressive retry logic for activation to handle publish timing
+      // n8n needs significant time to fully "publish" subworkflows before parent workflows can reference them
+      // The subworkflow must be fully indexed and available, not just "active"
       await activateWorkflowWithRetry(created.workflowId, config, {
-        maxRetries: 5,
-        initialDelayMs: 2000,
+        maxRetries: 8,        // More retries for slow n8n instances
+        initialDelayMs: 3000, // Start with 3 second delay, exponential backoff
       });
 
       // Update registry with activation success
@@ -837,8 +839,9 @@ export async function importAllWorkflows(
       onProgress?.(progress);
 
       // Wait for n8n to fully publish the workflow before activating the next one
-      // This is critical for subworkflows that are referenced by parent workflows
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      // This delay is CRITICAL - n8n needs time to index the workflow for subworkflow references
+      // Without this delay, parent workflows will fail with "workflow not published" errors
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -952,12 +955,23 @@ async function createWorkflowPhase1(
     let n8nWorkflow: N8nWorkflow;
     let isUpdate = false;
 
+    // SAFETY: Explicitly ensure no tags property exists (n8n rejects tags in API requests)
+    // This is a belt-and-suspenders check since parseWorkflowFile and stripReadOnlyFields
+    // should already handle this, but we triple-check to avoid 400 errors
+    const safeWorkflow: WorkflowDefinition = {
+      name: workflow.name,
+      nodes: workflow.nodes,
+      connections: workflow.connections,
+      settings: workflow.settings,
+      staticData: workflow.staticData,
+    };
+
     // Check if workflow already exists in n8n by name
-    const existingWorkflow = await findWorkflowByName(workflow.name, config);
+    const existingWorkflow = await findWorkflowByName(safeWorkflow.name, config);
 
     if (existingWorkflow) {
       // Update existing workflow (leave activation state unchanged)
-      n8nWorkflow = await updateWorkflow(existingWorkflow.id, workflow, config);
+      n8nWorkflow = await updateWorkflow(existingWorkflow.id, safeWorkflow, config);
       isUpdate = true;
       log.info("Workflow updated (Phase 1)", {
         filename,
@@ -966,7 +980,7 @@ async function createWorkflowPhase1(
       });
     } else {
       // Create new workflow (inactive by default)
-      n8nWorkflow = await createWorkflow(workflow, config);
+      n8nWorkflow = await createWorkflow(safeWorkflow, config);
       log.info("Workflow created (Phase 1)", {
         filename,
         id: n8nWorkflow.id,
