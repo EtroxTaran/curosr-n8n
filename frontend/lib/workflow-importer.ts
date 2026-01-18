@@ -11,6 +11,7 @@ import {
   extractWebhookPaths,
   type WorkflowDefinition,
   type N8nWorkflow,
+  type N8nNode,
   type N8nApiConfig,
 } from "@/lib/n8n-api";
 import { getN8nConfig } from "@/lib/settings";
@@ -119,9 +120,52 @@ function calculateChecksum(content: string): string {
 }
 
 /**
- * Parse workflow JSON file content.
+ * Strip credential references from workflow nodes.
+ *
+ * When importing workflows to a fresh n8n instance, credential IDs from the
+ * source instance won't exist. n8n returns 400 Bad Request if we try to
+ * reference non-existent credentials.
+ *
+ * This function removes credential references so workflows can be imported,
+ * then users configure credentials manually in the n8n UI.
  */
-function parseWorkflowFile(content: string): WorkflowDefinition {
+function stripCredentials(
+  nodes: N8nNode[],
+  options: { logStripped?: boolean } = {}
+): N8nNode[] {
+  const strippedCredentials: Array<{ nodeName: string; credType: string }> = [];
+
+  const cleanedNodes = nodes.map((node) => {
+    if (node.credentials && Object.keys(node.credentials).length > 0) {
+      // Log which credentials were stripped
+      for (const credType of Object.keys(node.credentials)) {
+        strippedCredentials.push({ nodeName: node.name, credType });
+      }
+      // Return node without credentials
+      const { credentials: _removed, ...nodeWithoutCreds } = node;
+      return nodeWithoutCreds as N8nNode;
+    }
+    return node;
+  });
+
+  if (options.logStripped && strippedCredentials.length > 0) {
+    log.info("Stripped credentials from workflow nodes", {
+      count: strippedCredentials.length,
+      credentials: strippedCredentials,
+    });
+  }
+
+  return cleanedNodes;
+}
+
+/**
+ * Parse workflow JSON file content.
+ * Optionally strips credentials for fresh imports.
+ */
+function parseWorkflowFile(
+  content: string,
+  options: { stripCredentials?: boolean } = { stripCredentials: true }
+): WorkflowDefinition {
   const data = JSON.parse(content);
 
   // Validate required fields
@@ -129,9 +173,15 @@ function parseWorkflowFile(content: string): WorkflowDefinition {
     throw new Error("Invalid workflow file: missing name or nodes");
   }
 
+  // Strip credentials by default to avoid 400 errors on fresh n8n instances
+  let nodes = data.nodes;
+  if (options.stripCredentials !== false) {
+    nodes = stripCredentials(data.nodes, { logStripped: true });
+  }
+
   return {
     name: data.name,
-    nodes: data.nodes,
+    nodes,
     connections: data.connections || {},
     settings: data.settings,
     staticData: data.staticData,
@@ -271,7 +321,8 @@ export async function getBundledWorkflows(
 
     try {
       const content = await fs.readFile(filepath, "utf-8");
-      const workflow = parseWorkflowFile(content);
+      // Don't strip credentials here - we need to know which workflows require credential config
+      const workflow = parseWorkflowFile(content, { stripCredentials: false });
 
       workflows.push({
         filename,
@@ -403,6 +454,10 @@ export async function importWorkflow(
 
   log.info("Importing workflow", { filename, forceUpdate });
 
+  // Declare workflow variables outside try block so they're accessible in catch
+  let workflowName: string = filename.replace(/\.json$/, ""); // Fallback to filename
+  let checksum: string = "";
+
   try {
     // Get n8n config
     const config = options.configOverride || (await getN8nConfig());
@@ -411,10 +466,10 @@ export async function importWorkflow(
     }
 
     // Read workflow file
-    const { workflow, checksum } = await readWorkflowFile(
-      filename,
-      workflowsDir
-    );
+    const fileData = await readWorkflowFile(filename, workflowsDir);
+    const workflow = fileData.workflow;
+    checksum = fileData.checksum;
+    workflowName = workflow.name; // Update with actual name from file
 
     // Check current registry status
     const entry = await getWorkflowEntry(filename);
@@ -494,14 +549,43 @@ export async function importWorkflow(
       webhookPaths,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    // Extract detailed error message
+    let errorMessage: string;
+    if (error instanceof Error) {
+      // Check if this is an n8n API error with response details
+      const apiError = error as Error & { response?: unknown; statusCode?: number };
+      if (apiError.response) {
+        // Try to extract meaningful message from n8n response
+        const response = apiError.response;
+        if (typeof response === "object" && response !== null) {
+          const respObj = response as Record<string, unknown>;
+          errorMessage = respObj.message as string ||
+            respObj.error as string ||
+            JSON.stringify(response);
+        } else {
+          errorMessage = String(response);
+        }
+        errorMessage = `n8n API error (${apiError.statusCode}): ${errorMessage}`;
+      } else {
+        errorMessage = error.message;
+      }
+    } else {
+      errorMessage = String(error);
+    }
 
-    log.error("Failed to import workflow", { filename, error: errorMessage });
+    log.error("Failed to import workflow", {
+      filename,
+      workflowName,
+      error: errorMessage,
+    });
 
-    // Update registry with failure
+    // Update registry with failure - use workflowName which is accessible here
     const entry = await getWorkflowEntry(filename);
     await upsertWorkflowEntry({
       workflow_file: filename,
+      workflow_name: workflowName, // Now accessible from outer scope
+      local_version: checksum ? checksum.substring(0, 8) : "unknown",
+      local_checksum: checksum || null,
       import_status: "failed",
       last_error: errorMessage,
       retry_count: (entry?.retry_count ?? 0) + 1,

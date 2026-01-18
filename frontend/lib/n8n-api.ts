@@ -100,8 +100,23 @@ async function n8nFetch<T>(
       errorBody = await response.text();
     }
 
+    // Extract human-readable error message from n8n response
+    let errorDetail = "";
+    if (typeof errorBody === "object" && errorBody !== null) {
+      const errObj = errorBody as Record<string, unknown>;
+      errorDetail = (errObj.message || errObj.error || errObj.reason || "") as string;
+      if (!errorDetail && errObj.errors && Array.isArray(errObj.errors)) {
+        // n8n sometimes returns errors as an array
+        errorDetail = errObj.errors.map((e: unknown) =>
+          typeof e === "object" && e !== null ? (e as Record<string, unknown>).message || JSON.stringify(e) : String(e)
+        ).join("; ");
+      }
+    } else if (typeof errorBody === "string") {
+      errorDetail = errorBody;
+    }
+
     const error = new Error(
-      `n8n API error: ${response.status} ${response.statusText}`
+      `n8n API error: ${response.status} ${response.statusText}${errorDetail ? ` - ${errorDetail}` : ""}`
     ) as N8nApiError;
     error.statusCode = response.status;
     error.response = errorBody;
@@ -109,7 +124,9 @@ async function n8nFetch<T>(
     log.error("n8n API request failed", {
       endpoint,
       status: response.status,
-      error: errorBody,
+      statusText: response.statusText,
+      errorDetail: errorDetail || "(no detail)",
+      errorBody: typeof errorBody === "object" ? JSON.stringify(errorBody) : errorBody,
     });
 
     throw error;
