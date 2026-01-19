@@ -187,11 +187,14 @@ jobs:
     name: Trigger Dokploy Deploy
     runs-on: ubuntu-latest
     needs: [validate, sync-workflows]
-    if: ${{ !inputs.sync_only && secrets.DOKPLOY_WEBHOOK_URL != '' }}
+    if: ${{ !inputs.sync_only }}
     steps:
       - name: Trigger Dokploy deployment
+        if: ${{ env.DOKPLOY_WEBHOOK_URL != '' }}
+        env:
+          DOKPLOY_WEBHOOK_URL: ${{ secrets.DOKPLOY_WEBHOOK_URL }}
         run: |
-          curl -X POST "${{ secrets.DOKPLOY_WEBHOOK_URL }}" \
+          curl -X POST "$DOKPLOY_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d '{"ref": "${{ github.ref }}", "sha": "${{ github.sha }}"}'
         continue-on-error: true
@@ -201,14 +204,18 @@ jobs:
     name: Health Check
     runs-on: ubuntu-latest
     needs: [notify-deploy]
-    if: ${{ !inputs.sync_only && secrets.DASHBOARD_URL != '' }}
+    if: ${{ !inputs.sync_only }}
+    env:
+      DASHBOARD_URL: ${{ secrets.DASHBOARD_URL }}
+      N8N_API_URL: ${{ secrets.N8N_API_URL }}
     steps:
       - name: Wait for deployment
         run: sleep 60
 
       - name: Check dashboard health
+        if: ${{ env.DASHBOARD_URL != '' }}
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.DASHBOARD_URL }}/api/health")
+          response=$(curl -s -o /dev/null -w "%{http_code}" "$DASHBOARD_URL/api/health")
           if [ "$response" = "200" ]; then
             echo "Dashboard is healthy!"
           else
@@ -218,8 +225,9 @@ jobs:
         continue-on-error: true
 
       - name: Check n8n health
+        if: ${{ env.N8N_API_URL != '' }}
         run: |
-          response=$(curl -s -o /dev/null -w "%{http_code}" "${{ secrets.N8N_API_URL }}/healthz")
+          response=$(curl -s -o /dev/null -w "%{http_code}" "$N8N_API_URL/healthz")
           if [ "$response" = "200" ]; then
             echo "n8n is healthy!"
           else
@@ -233,7 +241,10 @@ jobs:
     name: Verify Workflows
     runs-on: ubuntu-latest
     needs: [health-check]
-    if: ${{ !inputs.sync_only && secrets.N8N_API_URL != '' && secrets.N8N_API_KEY != '' }}
+    if: ${{ !inputs.sync_only }}
+    env:
+      N8N_API_URL: ${{ secrets.N8N_API_URL }}
+      N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
     steps:
       - name: Wait for workflow import
         run: |
@@ -241,9 +252,10 @@ jobs:
           sleep 30
 
       - name: Check workflow availability
+        if: ${{ env.N8N_API_URL != '' && env.N8N_API_KEY != '' }}
         run: |
-          response=$(curl -s "${{ secrets.N8N_API_URL }}/api/v1/workflows" \
-            -H "X-N8N-API-KEY: ${{ secrets.N8N_API_KEY }}" \
+          response=$(curl -s "$N8N_API_URL/api/v1/workflows" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY" \
             --max-time 30)
 
           workflow_count=$(echo "$response" | grep -o '"id"' | wc -l)
@@ -261,9 +273,10 @@ jobs:
           fi
 
       - name: Verify critical workflows
+        if: ${{ env.N8N_API_URL != '' && env.N8N_API_KEY != '' }}
         run: |
-          response=$(curl -s "${{ secrets.N8N_API_URL }}/api/v1/workflows" \
-            -H "X-N8N-API-KEY: ${{ secrets.N8N_API_KEY }}" \
+          response=$(curl -s "$N8N_API_URL/api/v1/workflows" \
+            -H "X-N8N-API-KEY: $N8N_API_KEY" \
             --max-time 30)
 
           # Check for API workflow (critical for dashboard)
