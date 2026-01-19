@@ -1352,7 +1352,8 @@ export async function importAllWorkflows(
       // Wait for n8n to fully publish the workflow before activating the next one
       // This delay is CRITICAL - n8n needs time to index the workflow for subworkflow references
       // Without this delay, parent workflows will fail with "workflow not published" errors
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // 8 seconds is needed because n8n's internal indexing can take significant time
+      await new Promise((resolve) => setTimeout(resolve, 8000));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
