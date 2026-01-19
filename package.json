@@ -41,6 +41,14 @@
     "test:local-prod:validate": "bash scripts/validate-production-parity.sh",
     "test:local-prod:validate:keep": "bash scripts/validate-production-parity.sh --keep-running",
     "test:production-parity": "bash scripts/validate-production-parity.sh",
+    "test:prod-parity": "bash scripts/run-prod-parity-tests.sh",
+    "test:prod-parity:quick": "bash scripts/run-prod-parity-tests.sh --quick",
+    "test:prod-parity:keep": "bash scripts/run-prod-parity-tests.sh --keep-running",
+    "test:n8n:setup": "bash scripts/setup-n8n-test-instance.sh",
+    "test:n8n:wait": "bash scripts/wait-for-services.sh",
+    "test:n8n:integration": "vitest run tests/n8n-real-api.integration.test.ts",
+    "test:n8n:concurrency": "vitest run tests/n8n-concurrency.test.ts",
+    "test:e2e:prod": "cd frontend && DASHBOARD_URL=http://dashboard.localhost npx playwright test",
     "prepare": "husky"
   },
   "repository": {

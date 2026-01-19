@@ -3,6 +3,8 @@ name: Deploy & Sync Workflows
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       sync_only:
@@ -11,6 +13,10 @@ on:
         default: false
       dry_run:
         description: 'Dry run workflow sync'
+        type: boolean
+        default: false
+      run_e2e:
+        description: 'Run E2E tests (slower)'
         type: boolean
         default: false
 
@@ -65,12 +71,97 @@ jobs:
       - name: Validate workflow files
         run: npm run test:workflows
 
+  # Job 1c: Frontend Unit Tests
+  frontend-tests:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run tests
+        working-directory: frontend
+        run: npm test
+
+  # Job 1d: Production Parity Tests (optional, on PR or manual trigger)
+  production-parity:
+    name: Production Parity Tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' || inputs.run_e2e }}
+    needs: [validate, validate-workflows, frontend-tests]
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: n8n
+          POSTGRES_PASSWORD: n8n_test_password
+          POSTGRES_DB: n8n
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install chromium
+
+      - name: Start test environment
+        run: |
+          docker compose -f docker-compose.test.yml up -d
+          ./scripts/wait-for-services.sh --compose-file docker-compose.test.yml --timeout 120 --skip-graphiti
+
+      - name: Setup n8n test instance
+        run: |
+          ./scripts/setup-n8n-test-instance.sh
+          echo "N8N_API_KEY=$(cat /tmp/n8n-test-api-key)" >> $GITHUB_ENV
+        continue-on-error: true
+
+      - name: Run workflow integration tests
+        env:
+          N8N_API_URL: http://localhost:5678
+        run: npm run test:workflows:integration
+        continue-on-error: true
+
+      - name: Stop test environment
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
   # Job 2: Sync n8n Workflows
   sync-workflows:
     name: Sync n8n Workflows
     runs-on: ubuntu-latest
-    needs: [validate, validate-workflows]
-    if: ${{ !inputs.sync_only || inputs.sync_only }}
+    needs: [validate, validate-workflows, frontend-tests]
+    if: ${{ github.event_name == 'push' || inputs.sync_only }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
