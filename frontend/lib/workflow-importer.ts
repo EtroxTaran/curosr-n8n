@@ -1325,6 +1325,8 @@ export async function importAllWorkflows(
       // Update registry with activation success
       await upsertWorkflowEntry({
         workflow_file: created.filename,
+        workflow_name: created.workflowName,
+        n8n_workflow_id: created.workflowId,
         is_active: true,
         import_status: "imported",
         last_import_at: new Date(),
@@ -1371,6 +1373,8 @@ export async function importAllWorkflows(
       // Update registry with activation failure
       await upsertWorkflowEntry({
         workflow_file: created.filename,
+        workflow_name: created.workflowName,
+        n8n_workflow_id: created.workflowId,
         import_status: "failed",
         last_error: `Activation failed: ${errorMessage}`,
       });
