@@ -61,3 +61,4 @@ frontend/app.config.timestamp_*.js
 .context/terminal/*
 !.context/terminal/.gitkeep
 .context/history/*.log
+.env.test-prod
