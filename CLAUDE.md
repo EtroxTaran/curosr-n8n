@@ -20,7 +20,7 @@
 
 The **AI Product Factory** is an n8n-based AI orchestration system that generates comprehensive **Product Vision** and **Architecture** documents through multi-phase, collaborative AI agent workflows.
 
-**Version**: v3.0.7 (2026-01-19)
+**Version**: v3.0.8 (2026-01-19)
 
 ### Key Capabilities
 
@@ -508,15 +508,44 @@ npm run start:migrate       # Run migrations + start server
 | `npm run test:env:up` | Start test Docker environment |
 | `npm run test:env:down` | Stop test environment |
 
+### Production Parity Testing
+
+The production parity testing infrastructure catches issues that only occur in production:
+- "tags is read-only" errors during workflow import
+- "workflow not published" errors during subworkflow calls
+- Database migration issues
+- Service communication problems
+
+```bash
+# Full production parity test suite
+npm run test:prod-parity
+
+# Quick mode (skips Graphiti and E2E)
+npm run test:prod-parity:quick
+
+# Keep services running after tests (for debugging)
+npm run test:prod-parity:keep
+
+# Individual steps
+npm run test:local-prod:up           # Start environment
+npm run test:n8n:wait                # Wait for services
+npm run test:n8n:setup               # Setup n8n owner + API key
+export N8N_API_KEY=$(cat /tmp/n8n-test-api-key)
+npm run test:n8n:integration         # Run n8n API tests
+npm run test:e2e:prod                # Run Playwright E2E tests
+npm run test:local-prod:down         # Stop environment
+```
+
 ### Test Structure
 
 ```
 tests/
-├── backend.test.ts           # Backend unit tests
-├── workflow-import.test.ts   # Workflow file validation (94 tests)
-├── n8n-integration.test.ts   # n8n API tests
-├── production-parity.test.ts # Production parity tests
-├── integration/              # Integration suite (79 tests)
+├── backend.test.ts                   # Backend unit tests
+├── workflow-import.test.ts           # Workflow file validation (94 tests)
+├── n8n-integration.test.ts           # n8n API tests (mocked)
+├── n8n-real-api.integration.test.ts  # n8n API tests (real instance)
+├── production-parity.test.ts         # Production parity tests
+├── integration/                      # Integration suite (79 tests)
 │   ├── 01-file-upload.test.ts
 │   ├── 02-project-creation.test.ts
 │   ├── 03-governance-flow.test.ts
@@ -526,7 +555,19 @@ tests/
 frontend/tests/
 ├── setup.ts                  # Vitest setup with Radix UI mocks
 ├── GovernanceWidget.test.tsx # 24 tests
-└── request-context.test.ts   # 26 tests
+├── request-context.test.ts   # 26 tests
+└── e2e/                      # Playwright E2E tests
+    ├── global-setup.ts       # Test environment setup
+    ├── global-teardown.ts    # Cleanup after tests
+    ├── auth-guards.spec.ts   # Authentication guard tests
+    ├── setup-wizard.spec.ts  # Setup wizard flow tests
+    └── workflow-management.spec.ts # Workflow management tests
+
+scripts/
+├── setup-n8n-test-instance.sh   # Create n8n owner + API key
+├── wait-for-services.sh         # Wait for Docker services
+├── run-prod-parity-tests.sh     # Full test orchestrator
+└── validate-production-parity.sh # Environment validation
 ```
 
 ### Testing Best Practices
@@ -670,6 +711,7 @@ export MAX_MCP_OUTPUT_TOKENS=50000
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v3.0.8 | 2026-01-19 | Pre-import validation (node compatibility, circular dependency detection), Phase 2 cleanup |
 | v3.0.7 | 2026-01-19 | Workflow sync API to detect n8n changes (deletions, state changes) |
 | v3.0.6 | 2026-01-18 | Two-phase workflow import with rollback, workflow export API |
 | v3.0.5 | 2026-01-18 | Pre-commit hooks (husky) for workflow and TypeScript validation |
