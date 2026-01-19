@@ -540,6 +540,95 @@ export async function getAvailableNodeTypeNames(
 // ============================================
 
 /**
+ * Extract the actual error message from various error formats.
+ * n8n API can return errors in different formats (string, nested object, etc.)
+ */
+function extractErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    // Check if there's additional context in the error
+    const anyError = error as Error & { response?: { data?: { message?: string } } };
+    if (anyError.response?.data?.message) {
+      return anyError.response.data.message;
+    }
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  if (typeof error === "object" && error !== null) {
+    const obj = error as Record<string, unknown>;
+    if (typeof obj.message === "string") {
+      return obj.message;
+    }
+    if (typeof obj.error === "string") {
+      return obj.error;
+    }
+    // Try to stringify for inspection
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
+/**
+ * Check if an error indicates a subworkflow dependency issue.
+ * These errors occur when trying to activate a workflow that references
+ * another workflow that hasn't been fully published yet.
+ */
+function isSubworkflowDependencyError(errorMessage: string): boolean {
+  const lowerMessage = errorMessage.toLowerCase();
+  return (
+    lowerMessage.includes("not published") ||
+    lowerMessage.includes("references workflow") ||
+    lowerMessage.includes("cannot publish workflow") ||
+    lowerMessage.includes("subworkflow") ||
+    lowerMessage.includes("execute workflow")
+  );
+}
+
+/**
+ * Verify a workflow is active by fetching it from the API.
+ * This helps confirm n8n has processed the activation.
+ */
+export async function verifyWorkflowActive(
+  workflowId: string,
+  configOverride?: N8nApiConfig,
+  options: {
+    maxAttempts?: number;
+    delayMs?: number;
+  } = {}
+): Promise<boolean> {
+  const { maxAttempts = 5, delayMs = 2000 } = options;
+  const config = configOverride || (await getConfigOrThrow());
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const workflow = await getWorkflow(workflowId, config);
+      if (workflow.active) {
+        log.debug("Workflow verified as active", { workflowId, attempt });
+        return true;
+      }
+      log.debug("Workflow not yet active, waiting", { workflowId, attempt });
+    } catch (error) {
+      log.warn("Failed to verify workflow status", {
+        workflowId,
+        attempt,
+        error: extractErrorMessage(error),
+      });
+    }
+
+    if (attempt < maxAttempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  return false;
+}
+
+/**
  * Activate workflow with retry logic.
  *
  * n8n sometimes needs time to "publish" subworkflows before parent workflows
@@ -559,11 +648,14 @@ export async function activateWorkflowWithRetry(
     initialDelayMs?: number;
   } = {}
 ): Promise<N8nWorkflow> {
-  // Increased defaults: 5 retries starting at 2 seconds
-  const { maxRetries = 5, initialDelayMs = 2000 } = options;
+  // Aggressive defaults: 10 retries starting at 5 seconds
+  // This gives up to 5s + 10s + 20s + 40s + 80s + 160s = ~5 minutes before giving up
+  // (delays capped at 2 minutes max per retry)
+  const { maxRetries = 10, initialDelayMs = 5000 } = options;
   const config = configOverride || (await getConfigOrThrow());
 
   let lastError: Error | null = null;
+  let lastErrorMessage = "";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -574,29 +666,50 @@ export async function activateWorkflowWithRetry(
       return result;
     } catch (error) {
       lastError = error as Error;
+      lastErrorMessage = extractErrorMessage(error);
+
       // Check for subworkflow dependency errors
-      const isSubworkflowError =
-        lastError.message.includes("not published") ||
-        lastError.message.includes("references workflow") ||
-        lastError.message.includes("Cannot publish workflow");
+      const isSubworkflowError = isSubworkflowDependencyError(lastErrorMessage);
+
+      log.warn("Activation attempt failed", {
+        workflowId,
+        attempt,
+        maxRetries,
+        isSubworkflowError,
+        error: lastErrorMessage,
+      });
 
       if (attempt < maxRetries && isSubworkflowError) {
-        const delay = initialDelayMs * Math.pow(2, attempt);
-        log.warn("Activation failed due to subworkflow dependency, retrying", {
+        // Exponential backoff with jitter, capped at 2 minutes
+        const baseDelay = initialDelayMs * Math.pow(2, attempt);
+        const jitter = Math.random() * 1000; // Add up to 1 second of random jitter
+        const delay = Math.min(baseDelay + jitter, 120000); // Cap at 2 minutes
+
+        log.info("Retrying activation due to subworkflow dependency", {
           workflowId,
           attempt: attempt + 1,
           maxRetries,
-          delayMs: delay,
-          error: lastError.message,
+          delayMs: Math.round(delay),
         });
+
         await new Promise((resolve) => setTimeout(resolve, delay));
-      } else {
+      } else if (!isSubworkflowError) {
+        // Non-subworkflow error, don't retry
+        log.error("Activation failed with non-recoverable error", {
+          workflowId,
+          error: lastErrorMessage,
+        });
         break;
       }
     }
   }
 
-  throw lastError;
+  // Create a more informative error
+  const finalError = new Error(
+    `Failed to activate workflow ${workflowId} after ${maxRetries + 1} attempts: ${lastErrorMessage}`
+  );
+  (finalError as Error & { cause?: Error }).cause = lastError ?? undefined;
+  throw finalError;
 }
 
 // ============================================

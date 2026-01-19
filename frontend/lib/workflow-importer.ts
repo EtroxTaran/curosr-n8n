@@ -8,6 +8,7 @@ import {
   updateWorkflow,
   activateWorkflow,
   activateWorkflowWithRetry,
+  verifyWorkflowActive,
   deactivateWorkflow,
   deleteWorkflow,
   findWorkflowByName,
@@ -1349,11 +1350,26 @@ export async function importAllWorkflows(
       progress.completed++;
       onProgress?.(progress);
 
-      // Wait for n8n to fully publish the workflow before activating the next one
+      // Verify the workflow is truly active by querying n8n
+      // This confirms n8n has processed the activation before we move on
+      const isVerified = await verifyWorkflowActive(created.workflowId, config, {
+        maxAttempts: 5,
+        delayMs: 2000,
+      });
+
+      if (!isVerified) {
+        log.warn("Workflow activation could not be verified", {
+          filename: created.filename,
+          workflowId: created.workflowId,
+        });
+      }
+
+      // Wait for n8n to fully PUBLISH the workflow before activating the next one
       // This delay is CRITICAL - n8n needs time to index the workflow for subworkflow references
-      // Without this delay, parent workflows will fail with "workflow not published" errors
-      // 8 seconds is needed because n8n's internal indexing can take significant time
-      await new Promise((resolve) => setTimeout(resolve, 8000));
+      // Even after the API says the workflow is active, n8n's internal publishing is asynchronous
+      // and dependent workflows will fail with "workflow not published" errors without this delay.
+      // 15 seconds provides a larger buffer for n8n's internal indexing to complete.
+      await new Promise((resolve) => setTimeout(resolve, 15000));
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
@@ -1806,8 +1822,14 @@ export async function retryFailedActivations(
         workflowId: workflow.workflowId,
       });
 
-      // Wait for n8n to index
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Verify the workflow is active and wait for n8n to publish
+      await verifyWorkflowActive(workflow.workflowId, config, {
+        maxAttempts: 5,
+        delayMs: 2000,
+      });
+
+      // Wait for n8n to fully publish the workflow
+      await new Promise((resolve) => setTimeout(resolve, 15000));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
