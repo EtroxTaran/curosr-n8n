@@ -180,6 +180,11 @@ jobs:
           N8N_API_URL: ${{ secrets.N8N_API_URL }}
           N8N_API_KEY: ${{ secrets.N8N_API_KEY }}
         run: |
+          if [ -z "$N8N_API_URL" ] || [ -z "$N8N_API_KEY" ]; then
+            echo "⚠️  Skipping workflow sync: N8N_API_URL or N8N_API_KEY not configured"
+            echo "   Configure these secrets in GitHub repo settings to enable workflow sync"
+            exit 0
+          fi
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             node scripts/sync-workflows.js --dry-run --verbose
           else
