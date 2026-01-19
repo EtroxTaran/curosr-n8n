@@ -1,7 +1,13 @@
+import { useState, useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   CheckCircle,
   XCircle,
@@ -11,6 +17,12 @@ import {
   AlertTriangle,
   Clock,
   RefreshCcw,
+  Eye,
+  GitBranch,
+  ChevronDown,
+  ChevronRight,
+  Play,
+  AlertCircle,
 } from "lucide-react";
 
 export interface WorkflowStatus {
@@ -42,6 +54,40 @@ export interface SyncResult {
   errors: number;
 }
 
+// Phase B: Dry-run preview types
+export interface DryRunWorkflow {
+  filename: string;
+  name: string;
+  action: "create" | "update" | "skip";
+  reason: string;
+  currentVersion?: string;
+  newVersion?: string;
+}
+
+export interface DryRunResult {
+  workflows: DryRunWorkflow[];
+  validation: {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+    nodeValidation: {
+      missingNodes: Array<{ nodeType: string; workflows: string[] }>;
+    };
+    dependencyValidation: {
+      hasCycle: boolean;
+      cycles: string[][];
+      dependencyOrder: string[];
+    };
+  };
+}
+
+// Phase B: SSE streaming types
+export interface SSEImportEvent {
+  type: "start" | "validation" | "workflow_start" | "workflow_complete" | "phase_change" | "complete" | "error";
+  timestamp: string;
+  data: Record<string, unknown>;
+}
+
 interface SetupStepImportProps {
   workflows: WorkflowStatus[];
   isLoading: boolean;
@@ -58,6 +104,10 @@ interface SetupStepImportProps {
   isSyncing?: boolean;
   lastSyncResult?: SyncResult | null;
   onSync?: () => void;
+  // Phase B: Enhanced import features
+  onDryRun?: () => Promise<DryRunResult>;
+  onStartStreamingImport?: () => void;
+  useStreamingImport?: boolean;
 }
 
 function getStatusIcon(status: WorkflowStatus["importStatus"]) {
@@ -110,7 +160,16 @@ export function SetupStepImport({
   isSyncing,
   lastSyncResult,
   onSync,
+  onDryRun,
+  onStartStreamingImport,
+  useStreamingImport,
 }: SetupStepImportProps) {
+  // Phase B: Local state for dry-run preview
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
+  const [isDryRunning, setIsDryRunning] = useState(false);
+  const [showDependencyGraph, setShowDependencyGraph] = useState(false);
+  const [showValidation, setShowValidation] = useState(false);
+
   const importedCount = workflows.filter((w) => w.importStatus === "imported").length;
   const failedCount = workflows.filter(
     (w) => w.importStatus === "failed" || w.importStatus === "activation_failed"
@@ -119,6 +178,30 @@ export function SetupStepImport({
 
   const allImported = importedCount === workflows.length;
   const hasFailures = failedCount > 0;
+
+  // Phase B: Run dry-run preview
+  const handleDryRun = useCallback(async () => {
+    if (!onDryRun) return;
+    setIsDryRunning(true);
+    try {
+      const result = await onDryRun();
+      setDryRunResult(result);
+      setShowValidation(true);
+    } catch (error) {
+      console.error("Dry-run failed:", error);
+    } finally {
+      setIsDryRunning(false);
+    }
+  }, [onDryRun]);
+
+  // Phase B: Handle import (with streaming if available)
+  const handleStartImport = useCallback(() => {
+    if (useStreamingImport && onStartStreamingImport) {
+      onStartStreamingImport();
+    } else {
+      onStartImport();
+    }
+  }, [useStreamingImport, onStartStreamingImport, onStartImport]);
 
   return (
     <div className="space-y-6">
@@ -137,6 +220,172 @@ export function SetupStepImport({
           <p className="text-xs text-muted-foreground">Imported</p>
         </div>
       </div>
+
+      {/* Phase B: Dry-run validation results */}
+      {dryRunResult && (
+        <div className="space-y-3">
+          {/* Validation status banner */}
+          <div
+            className={`p-3 rounded-lg border ${
+              dryRunResult.validation.valid
+                ? "bg-green-50 border-green-200 dark:bg-green-950/50 dark:border-green-900"
+                : "bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-900"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {dryRunResult.validation.valid ? (
+                <CheckCircle className="w-5 h-5 text-green-600" />
+              ) : (
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+              )}
+              <span className="font-medium">
+                {dryRunResult.validation.valid
+                  ? "Pre-import validation passed"
+                  : "Validation warnings detected"}
+              </span>
+            </div>
+          </div>
+
+          {/* Validation details collapsible */}
+          <Collapsible open={showValidation} onOpenChange={setShowValidation}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="w-full justify-between">
+                <span className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  Validation Details
+                </span>
+                {showValidation ? (
+                  <ChevronDown className="w-4 h-4" />
+                ) : (
+                  <ChevronRight className="w-4 h-4" />
+                )}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="space-y-2 mt-2">
+              {/* Errors */}
+              {dryRunResult.validation.errors.length > 0 && (
+                <div className="p-2 rounded bg-red-50 dark:bg-red-950/50 text-sm">
+                  <p className="font-medium text-red-800 dark:text-red-200 mb-1">
+                    Errors ({dryRunResult.validation.errors.length})
+                  </p>
+                  <ul className="list-disc list-inside text-red-700 dark:text-red-300 space-y-1">
+                    {dryRunResult.validation.errors.map((err, i) => (
+                      <li key={i}>{err}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Warnings */}
+              {dryRunResult.validation.warnings.length > 0 && (
+                <div className="p-2 rounded bg-amber-50 dark:bg-amber-950/50 text-sm">
+                  <p className="font-medium text-amber-800 dark:text-amber-200 mb-1">
+                    Warnings ({dryRunResult.validation.warnings.length})
+                  </p>
+                  <ul className="list-disc list-inside text-amber-700 dark:text-amber-300 space-y-1">
+                    {dryRunResult.validation.warnings.map((warn, i) => (
+                      <li key={i}>{warn}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Missing nodes */}
+              {dryRunResult.validation.nodeValidation.missingNodes.length > 0 && (
+                <div className="p-2 rounded bg-red-50 dark:bg-red-950/50 text-sm">
+                  <p className="font-medium text-red-800 dark:text-red-200 mb-1">
+                    Missing Node Types
+                  </p>
+                  <ul className="list-disc list-inside text-red-700 dark:text-red-300 space-y-1">
+                    {dryRunResult.validation.nodeValidation.missingNodes.map((node, i) => (
+                      <li key={i}>
+                        <code className="bg-red-100 dark:bg-red-900 px-1 rounded">{node.nodeType}</code>
+                        {" in "}{node.workflows.join(", ")}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Cycles */}
+              {dryRunResult.validation.dependencyValidation.hasCycle && (
+                <div className="p-2 rounded bg-red-50 dark:bg-red-950/50 text-sm">
+                  <p className="font-medium text-red-800 dark:text-red-200 mb-1">
+                    Circular Dependencies Detected
+                  </p>
+                  <ul className="list-disc list-inside text-red-700 dark:text-red-300 space-y-1">
+                    {dryRunResult.validation.dependencyValidation.cycles.map((cycle, i) => (
+                      <li key={i}>{cycle.join(" → ")}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* No issues */}
+              {dryRunResult.validation.errors.length === 0 &&
+                dryRunResult.validation.warnings.length === 0 &&
+                dryRunResult.validation.nodeValidation.missingNodes.length === 0 &&
+                !dryRunResult.validation.dependencyValidation.hasCycle && (
+                <div className="p-2 rounded bg-green-50 dark:bg-green-950/50 text-sm text-green-700 dark:text-green-300">
+                  All validation checks passed.
+                </div>
+              )}
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Dependency graph collapsible */}
+          <Collapsible open={showDependencyGraph} onOpenChange={setShowDependencyGraph}>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="w-full justify-between">
+                <span className="flex items-center gap-2">
+                  <GitBranch className="w-4 h-4" />
+                  Dependency Order ({dryRunResult.validation.dependencyValidation.dependencyOrder.length} workflows)
+                </span>
+                {showDependencyGraph ? (
+                  <ChevronDown className="w-4 h-4" />
+                ) : (
+                  <ChevronRight className="w-4 h-4" />
+                )}
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              <div className="p-3 rounded-lg bg-muted/50 border">
+                <p className="text-xs text-muted-foreground mb-2">
+                  Workflows will be imported in this order (dependencies first):
+                </p>
+                <div className="space-y-1">
+                  {dryRunResult.validation.dependencyValidation.dependencyOrder.map((name, i) => (
+                    <div key={name} className="flex items-center gap-2 text-sm">
+                      <span className="w-6 h-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-xs font-medium">
+                        {i + 1}
+                      </span>
+                      <span className="truncate">{name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {/* Preview changes summary */}
+          <div className="grid grid-cols-3 gap-2 text-center text-sm">
+            <div className="p-2 rounded bg-green-50 dark:bg-green-950/50">
+              <div className="font-bold text-green-700 dark:text-green-300">
+                {dryRunResult.workflows.filter(w => w.action === "create").length}
+              </div>
+              <div className="text-xs text-green-600 dark:text-green-400">Will Create</div>
+            </div>
+            <div className="p-2 rounded bg-blue-50 dark:bg-blue-950/50">
+              <div className="font-bold text-blue-700 dark:text-blue-300">
+                {dryRunResult.workflows.filter(w => w.action === "update").length}
+              </div>
+              <div className="text-xs text-blue-600 dark:text-blue-400">Will Update</div>
+            </div>
+            <div className="p-2 rounded bg-muted">
+              <div className="font-bold text-muted-foreground">
+                {dryRunResult.workflows.filter(w => w.action === "skip").length}
+              </div>
+              <div className="text-xs text-muted-foreground">Will Skip</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import progress */}
       {isImporting && importProgress && (
@@ -258,11 +507,33 @@ export function SetupStepImport({
       )}
 
       {/* Action buttons */}
-      <div className="flex justify-center gap-4">
+      <div className="flex justify-center gap-4 flex-wrap">
+        {/* Phase B: Preview Changes button */}
+        {!allImported && pendingCount > 0 && onDryRun && !dryRunResult && (
+          <Button
+            onClick={handleDryRun}
+            disabled={isImporting || isLoading || isSyncing || isDryRunning}
+            variant="outline"
+            size="lg"
+          >
+            {isDryRunning ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <Eye className="w-4 h-4 mr-2" />
+                Preview Changes
+              </>
+            )}
+          </Button>
+        )}
+
         {!allImported && pendingCount > 0 && (
           <Button
-            onClick={onStartImport}
-            disabled={isImporting || isLoading || isSyncing}
+            onClick={handleStartImport}
+            disabled={isImporting || isLoading || isSyncing || isDryRunning}
             size="lg"
           >
             {isImporting ? (
@@ -272,8 +543,8 @@ export function SetupStepImport({
               </>
             ) : (
               <>
-                <FileCode className="w-4 h-4 mr-2" />
-                Import All Workflows
+                <Play className="w-4 h-4 mr-2" />
+                {dryRunResult ? "Start Import" : "Import All Workflows"}
               </>
             )}
           </Button>

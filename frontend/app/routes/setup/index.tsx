@@ -13,6 +13,7 @@ import {
   type WebhookInfo,
   type VerificationResult,
   type SyncResult,
+  type DryRunResult,
 } from "@/components/setup";
 import { RouteErrorBoundary } from "@/components/error/RouteErrorBoundary";
 import { RouteLoadingSpinner } from "@/components/loading/RouteLoadingSpinner";
@@ -328,6 +329,22 @@ function SetupWizardPage() {
     }
   };
 
+  // Phase B: Dry-run import preview
+  const dryRunImport = useCallback(async (): Promise<DryRunResult> => {
+    const response = await fetch("/api/setup/workflows/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: true }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Failed to run dry-run preview");
+    }
+
+    const data = await response.json();
+    return data.preview as DryRunResult;
+  }, []);
+
   // Build webhooks list from workflows
   useEffect(() => {
     const webhooks: WebhookInfo[] = [];
@@ -557,6 +574,7 @@ function SetupWizardPage() {
             isSyncing={state.isSyncing}
             lastSyncResult={state.lastSyncResult}
             onSync={syncWorkflows}
+            onDryRun={dryRunImport}
           />
         );
       case 3:
