@@ -455,6 +455,87 @@ export async function comprehensiveHealthCheck(
 }
 
 // ============================================
+// Node Discovery
+// ============================================
+
+/**
+ * Node type information from n8n.
+ */
+export interface N8nNodeType {
+  name: string;
+  displayName: string;
+  description?: string;
+  group?: string[];
+  version?: number | number[];
+}
+
+/**
+ * List all available node types in the n8n instance.
+ *
+ * This is used for pre-import validation to ensure all nodes
+ * in a workflow exist in the target n8n instance.
+ */
+export async function listAvailableNodes(
+  configOverride?: N8nApiConfig
+): Promise<N8nNodeType[]> {
+  const config = configOverride || (await getConfigOrThrow());
+
+  try {
+    // n8n Public API doesn't have a /nodes endpoint, but we can use
+    // the internal API endpoint which is typically available
+    const response = await fetch(`${config.apiUrl}/api/v1/node-types`, {
+      method: "GET",
+      headers: {
+        "X-N8N-API-KEY": config.apiKey,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!response.ok) {
+      // Fallback: Try the older /types/nodes endpoint
+      const fallbackResponse = await fetch(`${config.apiUrl}/types/nodes`, {
+        method: "GET",
+        headers: {
+          "X-N8N-API-KEY": config.apiKey,
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!fallbackResponse.ok) {
+        log.warn("Node types endpoint not available, skipping node validation", {
+          status: response.status,
+          fallbackStatus: fallbackResponse.status,
+        });
+        return [];
+      }
+
+      const fallbackData = await fallbackResponse.json();
+      return Array.isArray(fallbackData) ? fallbackData : fallbackData.data || [];
+    }
+
+    const data = await response.json();
+    return Array.isArray(data) ? data : data.data || [];
+  } catch (error) {
+    // Node type listing is optional - don't fail import if unavailable
+    log.warn("Failed to list node types, skipping node validation", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+/**
+ * Get a set of available node type names for quick lookup.
+ */
+export async function getAvailableNodeTypeNames(
+  configOverride?: N8nApiConfig
+): Promise<Set<string>> {
+  const nodes = await listAvailableNodes(configOverride);
+  return new Set(nodes.map((n) => n.name));
+}
+
+// ============================================
 // Batch Operations (Two-Phase Import Support)
 // ============================================
 

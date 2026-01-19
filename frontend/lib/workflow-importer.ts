@@ -8,10 +8,12 @@ import {
   updateWorkflow,
   activateWorkflow,
   activateWorkflowWithRetry,
+  deactivateWorkflow,
   deleteWorkflow,
   findWorkflowByName,
   listWorkflows,
   extractWebhookPaths,
+  getAvailableNodeTypeNames,
   type WorkflowDefinition,
   type N8nWorkflow,
   type N8nNode,
@@ -80,8 +82,14 @@ export interface ImportProgress {
   completed: number;
   current: string;
   status: "pending" | "importing" | "complete" | "error";
-  phase?: "creating" | "activating";
+  phase?: "creating" | "activating" | "cleaning";
   results: ImportResult[];
+  failedActivations?: Array<{
+    filename: string;
+    workflowId: string;
+    error: string;
+    cleaned?: boolean;
+  }>;
 }
 
 /**
@@ -237,6 +245,301 @@ function hasCredentialReferences(workflow: WorkflowDefinition): boolean {
     }
   }
   return false;
+}
+
+// ============================================
+// Pre-Import Validation
+// ============================================
+
+/**
+ * Result of node compatibility validation.
+ */
+export interface NodeValidationResult {
+  valid: boolean;
+  totalNodes: number;
+  missingNodes: Array<{
+    nodeType: string;
+    nodeName: string;
+    workflowFile: string;
+  }>;
+  warnings: string[];
+}
+
+/**
+ * Result of circular dependency detection.
+ */
+export interface CircularDependencyResult {
+  hasCycle: boolean;
+  cycles: Array<string[]>;
+  dependencyOrder: string[];
+}
+
+/**
+ * Combined pre-import validation result.
+ */
+export interface PreImportValidationResult {
+  valid: boolean;
+  nodeValidation: NodeValidationResult;
+  dependencyValidation: CircularDependencyResult;
+  errors: string[];
+  warnings: string[];
+}
+
+/**
+ * Validate that all node types in workflows exist in the target n8n instance.
+ *
+ * @param workflows - Array of bundled workflows to validate
+ * @param configOverride - Optional n8n API config
+ * @returns Validation result with any missing nodes
+ */
+export async function validateNodeCompatibility(
+  workflows: BundledWorkflow[],
+  workflowsDir: string = DEFAULT_WORKFLOWS_DIR,
+  configOverride?: N8nApiConfig
+): Promise<NodeValidationResult> {
+  const result: NodeValidationResult = {
+    valid: true,
+    totalNodes: 0,
+    missingNodes: [],
+    warnings: [],
+  };
+
+  // Get available node types from n8n
+  const config = configOverride || (await getN8nConfig());
+  if (!config) {
+    result.warnings.push("n8n not configured, skipping node validation");
+    return result;
+  }
+
+  const availableNodes = await getAvailableNodeTypeNames(config);
+
+  // If we couldn't get node types, skip validation with warning
+  if (availableNodes.size === 0) {
+    result.warnings.push(
+      "Could not retrieve available node types from n8n, skipping node validation"
+    );
+    return result;
+  }
+
+  log.info("Validating node compatibility", {
+    workflowCount: workflows.length,
+    availableNodeTypes: availableNodes.size,
+  });
+
+  // Check each workflow's nodes
+  for (const bundled of workflows) {
+    try {
+      const { workflow } = await readWorkflowFile(bundled.filename, workflowsDir);
+      result.totalNodes += workflow.nodes.length;
+
+      for (const node of workflow.nodes) {
+        // Skip validation for certain internal node types
+        if (
+          node.type.startsWith("n8n-nodes-base.") ||
+          node.type.startsWith("@n8n/")
+        ) {
+          // Check if this specific node type exists
+          if (!availableNodes.has(node.type)) {
+            result.missingNodes.push({
+              nodeType: node.type,
+              nodeName: node.name,
+              workflowFile: bundled.filename,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      result.warnings.push(
+        `Failed to read workflow ${bundled.filename}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  result.valid = result.missingNodes.length === 0;
+
+  if (!result.valid) {
+    log.warn("Node compatibility validation failed", {
+      missingNodes: result.missingNodes.length,
+      details: result.missingNodes,
+    });
+  } else {
+    log.info("Node compatibility validation passed", {
+      totalNodes: result.totalNodes,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Detect circular dependencies in workflow graph.
+ *
+ * Uses depth-first search to find cycles in the dependency graph.
+ *
+ * @param workflows - Array of bundled workflows with dependencies
+ * @returns Result with any detected cycles and safe import order
+ */
+export function detectCircularDependencies(
+  workflows: BundledWorkflow[]
+): CircularDependencyResult {
+  const result: CircularDependencyResult = {
+    hasCycle: false,
+    cycles: [],
+    dependencyOrder: [],
+  };
+
+  // Build dependency graph: workflow name -> dependencies (workflow names)
+  const graph = new Map<string, string[]>();
+  const workflowByFile = new Map<string, BundledWorkflow>();
+
+  for (const workflow of workflows) {
+    workflowByFile.set(workflow.filename, workflow);
+    // Use workflow name as the key since dependencies reference names
+    graph.set(workflow.name, workflow.dependencies || []);
+  }
+
+  // DFS-based cycle detection
+  const visited = new Set<string>();
+  const recursionStack = new Set<string>();
+  const finished = new Set<string>();
+
+  function dfs(node: string, path: string[]): boolean {
+    if (recursionStack.has(node)) {
+      // Found a cycle - extract the cycle from the path
+      const cycleStart = path.indexOf(node);
+      const cycle = [...path.slice(cycleStart), node];
+      result.cycles.push(cycle);
+      result.hasCycle = true;
+      return true;
+    }
+
+    if (finished.has(node)) {
+      return false;
+    }
+
+    visited.add(node);
+    recursionStack.add(node);
+
+    const deps = graph.get(node) || [];
+    for (const dep of deps) {
+      // Only check dependencies that are in our workflow set
+      if (graph.has(dep)) {
+        dfs(dep, [...path, node]);
+      }
+    }
+
+    recursionStack.delete(node);
+    finished.add(node);
+    result.dependencyOrder.unshift(node); // Add to front for topological order
+
+    return false;
+  }
+
+  // Run DFS from each node
+  for (const workflowName of graph.keys()) {
+    if (!visited.has(workflowName)) {
+      dfs(workflowName, []);
+    }
+  }
+
+  if (result.hasCycle) {
+    log.error("Circular dependencies detected in workflows", {
+      cycles: result.cycles,
+    });
+  } else {
+    log.info("No circular dependencies detected", {
+      orderCount: result.dependencyOrder.length,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Run all pre-import validations.
+ *
+ * Validates:
+ * 1. Node compatibility - all nodes exist in target n8n
+ * 2. Circular dependencies - no cycles in workflow dependencies
+ *
+ * @param workflowsDir - Directory containing workflow files
+ * @param configOverride - Optional n8n API config
+ * @returns Combined validation result
+ */
+export async function validatePreImport(
+  workflowsDir: string = DEFAULT_WORKFLOWS_DIR,
+  configOverride?: N8nApiConfig
+): Promise<PreImportValidationResult> {
+  log.info("Running pre-import validation");
+
+  const result: PreImportValidationResult = {
+    valid: true,
+    nodeValidation: {
+      valid: true,
+      totalNodes: 0,
+      missingNodes: [],
+      warnings: [],
+    },
+    dependencyValidation: {
+      hasCycle: false,
+      cycles: [],
+      dependencyOrder: [],
+    },
+    errors: [],
+    warnings: [],
+  };
+
+  try {
+    // Get bundled workflows
+    const workflows = await getBundledWorkflows(workflowsDir);
+
+    if (workflows.length === 0) {
+      result.errors.push("No workflows found to validate");
+      result.valid = false;
+      return result;
+    }
+
+    // Run validations in parallel
+    const [nodeValidation, dependencyValidation] = await Promise.all([
+      validateNodeCompatibility(workflows, workflowsDir, configOverride),
+      Promise.resolve(detectCircularDependencies(workflows)),
+    ]);
+
+    result.nodeValidation = nodeValidation;
+    result.dependencyValidation = dependencyValidation;
+
+    // Aggregate warnings
+    result.warnings.push(...nodeValidation.warnings);
+
+    // Check for errors
+    if (!nodeValidation.valid) {
+      const missingTypes = [...new Set(nodeValidation.missingNodes.map((n) => n.nodeType))];
+      result.errors.push(
+        `Missing node types in n8n instance: ${missingTypes.join(", ")}`
+      );
+      result.valid = false;
+    }
+
+    if (dependencyValidation.hasCycle) {
+      const cycleStrs = dependencyValidation.cycles.map((c) => c.join(" -> "));
+      result.errors.push(`Circular dependencies detected: ${cycleStrs.join("; ")}`);
+      result.valid = false;
+    }
+
+    log.info("Pre-import validation complete", {
+      valid: result.valid,
+      errors: result.errors.length,
+      warnings: result.warnings.length,
+    });
+
+    return result;
+  } catch (error) {
+    result.errors.push(
+      `Validation failed: ${error instanceof Error ? error.message : String(error)}`
+    );
+    result.valid = false;
+    return result;
+  }
 }
 
 // ============================================
@@ -675,6 +978,11 @@ export async function importWorkflow(
  *
  * If Phase 1 fails, all created workflows are rolled back (deleted).
  * If Phase 2 fails, workflows remain created but inactive (recoverable).
+ *
+ * Options:
+ * - validateFirst: Run pre-import validation (node compatibility, circular deps)
+ * - cleanupOnActivationFailure: Clean up workflows that fail activation
+ * - cleanupOptions: Options for cleanup (delete vs deactivate)
  */
 export async function importAllWorkflows(
   onProgress?: (progress: ImportProgress) => void,
@@ -682,9 +990,21 @@ export async function importAllWorkflows(
     forceUpdate?: boolean;
     workflowsDir?: string;
     configOverride?: N8nApiConfig;
+    /** Run pre-import validation before importing */
+    validateFirst?: boolean;
+    /** Clean up workflows that fail activation (default: false, leave them for retry) */
+    cleanupOnActivationFailure?: boolean;
+    /** Options for cleanup if cleanupOnActivationFailure is true */
+    cleanupOptions?: CleanupOptions;
   } = {}
 ): Promise<ImportProgress> {
-  const { forceUpdate = false, workflowsDir = DEFAULT_WORKFLOWS_DIR } = options;
+  const {
+    forceUpdate = false,
+    workflowsDir = DEFAULT_WORKFLOWS_DIR,
+    validateFirst = false,
+    cleanupOnActivationFailure = false,
+    cleanupOptions = {},
+  } = options;
 
   const progress: ImportProgress = {
     total: WORKFLOW_IMPORT_ORDER.length,
@@ -693,17 +1013,52 @@ export async function importAllWorkflows(
     status: "pending",
     phase: "creating",
     results: [],
+    failedActivations: [],
   };
 
   log.info("Starting two-phase workflow import", {
     total: progress.total,
     forceUpdate,
+    validateFirst,
+    cleanupOnActivationFailure,
   });
 
   // Get n8n config once for all operations
   const config = options.configOverride || (await getN8nConfig());
   if (!config) {
     throw new Error("n8n not configured");
+  }
+
+  // ============================================
+  // OPTIONAL: Pre-import validation
+  // ============================================
+  if (validateFirst) {
+    log.info("Running pre-import validation");
+    progress.current = "Validating...";
+    onProgress?.(progress);
+
+    const validation = await validatePreImport(workflowsDir, config);
+
+    if (!validation.valid) {
+      log.error("Pre-import validation failed", {
+        errors: validation.errors,
+        warnings: validation.warnings,
+      });
+
+      progress.status = "error";
+      progress.current = "";
+      progress.results.push({
+        filename: "validation",
+        status: "failed",
+        error: validation.errors.join("; "),
+      });
+      onProgress?.(progress);
+      return progress;
+    }
+
+    log.info("Pre-import validation passed", {
+      warnings: validation.warnings,
+    });
   }
 
   progress.status = "importing";
@@ -852,6 +1207,13 @@ export async function importAllWorkflows(
         error: errorMessage,
       });
 
+      // Track failed activation for cleanup/retry
+      progress.failedActivations!.push({
+        filename: created.filename,
+        workflowId: created.workflowId,
+        error: errorMessage,
+      });
+
       // Update registry with activation failure
       await upsertWorkflowEntry({
         workflow_file: created.filename,
@@ -874,6 +1236,40 @@ export async function importAllWorkflows(
     }
   }
 
+  // ============================================
+  // OPTIONAL PHASE 3: Cleanup failed activations
+  // ============================================
+  if (cleanupOnActivationFailure && progress.failedActivations!.length > 0) {
+    log.info("Phase 3: Cleaning up failed workflow activations", {
+      count: progress.failedActivations!.length,
+    });
+    progress.phase = "cleaning";
+    progress.current = "Cleaning up...";
+    onProgress?.(progress);
+
+    const cleanupResults = await cleanupFailedActivations(
+      progress.failedActivations!,
+      config,
+      cleanupOptions
+    );
+
+    // Update failedActivations with cleanup status
+    for (const cleanupResult of cleanupResults) {
+      const failedEntry = progress.failedActivations!.find(
+        (f) => f.filename === cleanupResult.filename
+      );
+      if (failedEntry) {
+        failedEntry.cleaned = cleanupResult.action !== "error";
+      }
+    }
+
+    log.info("Cleanup complete", {
+      total: cleanupResults.length,
+      cleaned: cleanupResults.filter((r) => r.action !== "error").length,
+      errors: cleanupResults.filter((r) => r.action === "error").length,
+    });
+  }
+
   // Calculate final status
   const failedCount = progress.results.filter(
     (r) => r.status === "failed" || r.status === "activation_failed"
@@ -888,9 +1284,7 @@ export async function importAllWorkflows(
     imported: progress.results.filter((r) => r.status === "imported").length,
     updated: progress.results.filter((r) => r.status === "updated").length,
     skipped: progress.results.filter((r) => r.status === "skipped").length,
-    activationFailed: progress.results.filter(
-      (r) => r.status === "activation_failed"
-    ).length,
+    activationFailed: progress.failedActivations!.length,
     failed: failedCount,
   });
 
@@ -1077,6 +1471,210 @@ async function rollbackCreatedWorkflows(
       // Continue with other rollbacks
     }
   }
+}
+
+/**
+ * Options for cleaning up failed workflow activations.
+ */
+export interface CleanupOptions {
+  /** Delete workflows that failed activation (default: false, just deactivate) */
+  deleteWorkflows?: boolean;
+  /** Reset registry to pending status (default: true) */
+  resetRegistry?: boolean;
+}
+
+/**
+ * Result of cleanup operation for a single workflow.
+ */
+export interface CleanupResult {
+  filename: string;
+  workflowId: string;
+  action: "deactivated" | "deleted" | "error";
+  error?: string;
+}
+
+/**
+ * Clean up workflows that failed activation in Phase 2.
+ *
+ * By default, this deactivates the workflows (they remain in n8n but inactive).
+ * Use deleteWorkflows: true to completely remove them from n8n.
+ *
+ * @param failedWorkflows - Array of workflows that failed activation
+ * @param config - n8n API config
+ * @param options - Cleanup options
+ * @returns Array of cleanup results
+ */
+export async function cleanupFailedActivations(
+  failedWorkflows: Array<{ filename: string; workflowId: string; error: string }>,
+  config: N8nApiConfig,
+  options: CleanupOptions = {}
+): Promise<CleanupResult[]> {
+  const { deleteWorkflows: shouldDelete = false, resetRegistry = true } = options;
+  const results: CleanupResult[] = [];
+
+  log.info("Cleaning up failed workflow activations", {
+    count: failedWorkflows.length,
+    action: shouldDelete ? "delete" : "deactivate",
+  });
+
+  for (const workflow of failedWorkflows) {
+    const result: CleanupResult = {
+      filename: workflow.filename,
+      workflowId: workflow.workflowId,
+      action: "error",
+    };
+
+    try {
+      if (shouldDelete) {
+        // Delete the workflow from n8n
+        await deleteWorkflow(workflow.workflowId, config);
+        result.action = "deleted";
+
+        if (resetRegistry) {
+          // Reset registry entry
+          await upsertWorkflowEntry({
+            workflow_file: workflow.filename,
+            n8n_workflow_id: null,
+            import_status: "pending",
+            is_active: false,
+            last_error: "Deleted after activation failure",
+          });
+        }
+
+        log.info("Deleted workflow after activation failure", {
+          filename: workflow.filename,
+          workflowId: workflow.workflowId,
+        });
+      } else {
+        // Just ensure the workflow is deactivated
+        try {
+          await deactivateWorkflow(workflow.workflowId, config);
+        } catch (deactivateError) {
+          // Workflow might already be inactive
+          log.debug("Deactivate returned error (may already be inactive)", {
+            workflowId: workflow.workflowId,
+            error: deactivateError instanceof Error ? deactivateError.message : String(deactivateError),
+          });
+        }
+        result.action = "deactivated";
+
+        if (resetRegistry) {
+          // Update registry to reflect failed state
+          await upsertWorkflowEntry({
+            workflow_file: workflow.filename,
+            is_active: false,
+            import_status: "failed",
+            last_error: `Activation failed: ${workflow.error}`,
+          });
+        }
+
+        log.info("Deactivated workflow after activation failure", {
+          filename: workflow.filename,
+          workflowId: workflow.workflowId,
+        });
+      }
+
+      results.push(result);
+    } catch (error) {
+      result.error = error instanceof Error ? error.message : String(error);
+      results.push(result);
+
+      log.error("Failed to cleanup workflow", {
+        filename: workflow.filename,
+        workflowId: workflow.workflowId,
+        action: shouldDelete ? "delete" : "deactivate",
+        error: result.error,
+      });
+    }
+  }
+
+  log.info("Cleanup complete", {
+    total: failedWorkflows.length,
+    successful: results.filter((r) => r.action !== "error").length,
+    errors: results.filter((r) => r.action === "error").length,
+  });
+
+  return results;
+}
+
+/**
+ * Retry activation for workflows that previously failed.
+ *
+ * @param failedWorkflows - Array of workflows to retry
+ * @param config - n8n API config
+ * @returns Import results for retried workflows
+ */
+export async function retryFailedActivations(
+  failedWorkflows: Array<{ filename: string; workflowId: string }>,
+  config: N8nApiConfig
+): Promise<ImportResult[]> {
+  const results: ImportResult[] = [];
+
+  log.info("Retrying failed workflow activations", { count: failedWorkflows.length });
+
+  for (const workflow of failedWorkflows) {
+    try {
+      // Update registry to "importing" status
+      await upsertWorkflowEntry({
+        workflow_file: workflow.filename,
+        import_status: "importing",
+        last_error: null,
+      });
+
+      // Try to activate with retry logic
+      await activateWorkflowWithRetry(workflow.workflowId, config, {
+        maxRetries: 8,
+        initialDelayMs: 3000,
+      });
+
+      // Success - update registry
+      await upsertWorkflowEntry({
+        workflow_file: workflow.filename,
+        is_active: true,
+        import_status: "imported",
+        last_import_at: new Date(),
+        last_error: null,
+      });
+
+      results.push({
+        filename: workflow.filename,
+        status: "imported",
+        n8nWorkflowId: workflow.workflowId,
+      });
+
+      log.info("Successfully retried workflow activation", {
+        filename: workflow.filename,
+        workflowId: workflow.workflowId,
+      });
+
+      // Wait for n8n to index
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // Update registry with failure
+      await upsertWorkflowEntry({
+        workflow_file: workflow.filename,
+        import_status: "failed",
+        last_error: `Retry activation failed: ${errorMessage}`,
+      });
+
+      results.push({
+        filename: workflow.filename,
+        status: "activation_failed",
+        n8nWorkflowId: workflow.workflowId,
+        error: errorMessage,
+      });
+
+      log.error("Retry activation failed", {
+        filename: workflow.filename,
+        workflowId: workflow.workflowId,
+        error: errorMessage,
+      });
+    }
+  }
+
+  return results;
 }
 
 // ============================================
