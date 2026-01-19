@@ -11,6 +11,7 @@ export default tseslint.config(
       "node_modules/**",
       ".vinxi/**",
       ".output/**",
+      ".nitro/**",
       "app/routeTree.gen.ts",
       "*.config.js",
       "*.config.ts",

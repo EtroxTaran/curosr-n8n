@@ -284,7 +284,7 @@ export async function getSettingForDisplay(
     return null;
   }
 
-  let value = parseJsonbValue(row.setting_value);
+  const value = parseJsonbValue(row.setting_value);
   let displayValue: string;
 
   if (row.setting_type === "encrypted" || row.is_sensitive) {

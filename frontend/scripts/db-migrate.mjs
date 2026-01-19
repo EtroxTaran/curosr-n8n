@@ -19,6 +19,7 @@
  *                  MUST point to 'dashboard' database, NOT 'n8n' database
  */
 
+/* global process, console */
 import pg from 'pg';
 
 const { Pool } = pg;

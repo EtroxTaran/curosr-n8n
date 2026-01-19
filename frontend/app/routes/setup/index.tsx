@@ -127,7 +127,7 @@ function SetupWizardPage() {
         workflows: data.workflows,
         isLoadingWorkflows: false,
       }));
-    } catch (error) {
+    } catch (_error) {
       toast.error("Failed to load workflows");
       setState((prev) => ({ ...prev, isLoadingWorkflows: false }));
     }
@@ -163,7 +163,7 @@ function SetupWizardPage() {
         }));
         toast.error(data.error || "Connection failed");
       }
-    } catch (error) {
+    } catch (_error) {
       setState((prev) => ({
         ...prev,
         connectionStatus: "error",
@@ -519,7 +519,7 @@ function SetupWizardPage() {
         }
         break;
 
-      case 2: // Import -> Webhooks
+      case 2: { // Import -> Webhooks
         const importedCount = state.workflows.filter(
           (w) => w.importStatus === "imported"
         ).length;
@@ -529,6 +529,7 @@ function SetupWizardPage() {
           toast.error("Please import at least one workflow");
         }
         break;
+      }
 
       case 3: // Webhooks -> Verify
         setCurrentStep(4);

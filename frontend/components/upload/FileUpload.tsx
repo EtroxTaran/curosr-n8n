@@ -123,7 +123,7 @@ export function FileUpload({
               contentType,
             }),
           });
-        } catch (networkError) {
+        } catch (_networkError) {
           throw new Error("Network error: Unable to connect to server. Please check your connection and try again.");
         }
 
