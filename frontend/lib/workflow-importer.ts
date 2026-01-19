@@ -1151,6 +1151,8 @@ export async function importAllWorkflows(
     cleanupOnActivationFailure?: boolean;
     /** Options for cleanup if cleanupOnActivationFailure is true */
     cleanupOptions?: CleanupOptions;
+    /** Clear all registry entries before import (prevents stale workflow ID issues) */
+    clearRegistryFirst?: boolean;
   } = {}
 ): Promise<ImportProgress> {
   const {
@@ -1159,6 +1161,7 @@ export async function importAllWorkflows(
     validateFirst = false,
     cleanupOnActivationFailure = false,
     cleanupOptions = {},
+    clearRegistryFirst = false,
   } = options;
 
   const progress: ImportProgress = {
@@ -1176,6 +1179,7 @@ export async function importAllWorkflows(
     forceUpdate,
     validateFirst,
     cleanupOnActivationFailure,
+    clearRegistryFirst,
   });
 
   // Get n8n config once for all operations
@@ -1218,6 +1222,29 @@ export async function importAllWorkflows(
 
   progress.status = "importing";
   onProgress?.(progress);
+
+  // ============================================
+  // OPTIONAL: Clear registry before import
+  // ============================================
+  // This prevents 404 errors when old registry entries reference
+  // workflows that no longer exist in n8n (stale workflow IDs)
+  if (clearRegistryFirst) {
+    log.info("Clearing workflow registry before import");
+    progress.current = "Clearing old registry entries...";
+    onProgress?.(progress);
+
+    try {
+      const clearedCount = await clearWorkflowRegistry();
+      log.info("Workflow registry cleared", { clearedCount });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      log.warn("Failed to clear workflow registry, continuing with import", {
+        error: errorMessage,
+      });
+      // Don't fail the import - continue anyway
+    }
+  }
 
   // Track successfully created workflows for rollback
   const createdWorkflows: CreatedWorkflowInfo[] = [];
@@ -2043,6 +2070,7 @@ export async function syncWorkflowRegistry(
 
           await upsertWorkflowEntry({
             workflow_file: entry.workflow_file,
+            workflow_name: entry.workflow_name, // Preserve existing name
             n8n_workflow_id: null,
             is_active: false,
             import_status: "pending",
@@ -2063,6 +2091,7 @@ export async function syncWorkflowRegistry(
 
           await upsertWorkflowEntry({
             workflow_file: entry.workflow_file,
+            workflow_name: entry.workflow_name, // Preserve existing name
             is_active: n8nWorkflow.active,
             last_error: null,
           });

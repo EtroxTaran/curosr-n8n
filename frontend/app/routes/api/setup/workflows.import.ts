@@ -18,6 +18,7 @@ interface ImportWorkflowsRequest {
   filename?: string; // Specific file, or omit for all
   forceUpdate?: boolean;
   dryRun?: boolean; // Preview import without making changes
+  clearRegistryFirst?: boolean; // Clear registry before import (prevents stale ID errors)
 }
 
 /**
@@ -63,6 +64,7 @@ export const Route = createFileRoute("/api/setup/workflows/import")({
           const body = (await request.json()) as ImportWorkflowsRequest;
           const forceUpdate = body.forceUpdate || false;
           const dryRun = body.dryRun || false;
+          const clearRegistryFirst = body.clearRegistryFirst || false;
 
           // Handle dry-run mode - preview without making changes
           if (dryRun) {
@@ -121,11 +123,12 @@ export const Route = createFileRoute("/api/setup/workflows/import")({
             return withCorrelationId(response, ctx.correlationId);
           } else {
             // Import all workflows
-            log.info("Importing all workflows", { forceUpdate });
+            log.info("Importing all workflows", { forceUpdate, clearRegistryFirst });
 
             const progress = await importAllWorkflows(undefined, {
               forceUpdate,
               configOverride: config,
+              clearRegistryFirst,
             });
 
             const failedCount = progress.results.filter(
